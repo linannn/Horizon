@@ -1,117 +1,204 @@
 {
   "version": "1.0",
   "ai": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://api.deepseek.com",
-    "api_key_env": "DEEPSEEK_API_KEY",
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "base_url": "https://api.minimaxi.com/v1",
+    "api_key_env": "MINIMAX_API_KEY",
     "temperature": 0.3,
     "max_tokens": 8192,
     "throttle_sec": 1,
     "languages": [
-      "zh",
-      "en"
+      "zh"
     ],
-    "analysis_concurrency": 5,
-    "enrichment_concurrency": 5
+    "analysis_concurrency": 2,
+    "enrichment_concurrency": 2
   },
   "sources": {
     "github": [
       {
-        "type": "user_events",
-        "username": "karpathy",
-        "enabled": true
+        "type": "repo_releases",
+        "owner": "openai",
+        "repo": "codex",
+        "enabled": true,
+        "category": "ai-coding"
       },
       {
         "type": "repo_releases",
-        "owner": "vllm-project",
-        "repo": "vllm",
-        "enabled": true
+        "owner": "anthropics",
+        "repo": "claude-code",
+        "enabled": true,
+        "category": "ai-coding"
       },
       {
         "type": "repo_releases",
-        "owner": "sgl-project",
-        "repo": "sglang",
-        "enabled": true
+        "owner": "google-gemini",
+        "repo": "gemini-cli",
+        "enabled": true,
+        "category": "ai-coding"
       },
       {
         "type": "repo_releases",
-        "owner": "triton-lang",
-        "repo": "triton",
-        "enabled": true
+        "owner": "github",
+        "repo": "copilot-cli",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "anomalyco",
+        "repo": "opencode",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "cline",
+        "repo": "cline",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "aaif-goose",
+        "repo": "goose",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "continuedev",
+        "repo": "continue",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "Aider-AI",
+        "repo": "aider",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "OpenHands",
+        "repo": "OpenHands",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "vercel",
+        "repo": "ai",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "pydantic",
+        "repo": "pydantic-ai",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "browser-use",
+        "repo": "browser-use",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "browserbase",
+        "repo": "stagehand",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "mastra-ai",
+        "repo": "mastra",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "langchain-ai",
+        "repo": "langgraph",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "modelcontextprotocol",
+        "repo": "typescript-sdk",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "type": "repo_releases",
+        "owner": "modelcontextprotocol",
+        "repo": "servers",
+        "enabled": true,
+        "category": "agent-ecosystem"
       }
     ],
     "hackernews": {
       "enabled": true,
       "fetch_top_stories": 30,
-      "min_score": 150
+      "min_score": 150,
+      "category": "discovery"
     },
     "rss": [
       {
         "name": "Simon Willison",
         "url": "https://simonwillison.net/atom/everything/",
         "enabled": true,
-        "category": "ai-tools"
+        "category": "engineering-practice"
+      },
+      {
+        "name": "Latent Space",
+        "url": "https://www.latent.space/feed",
+        "enabled": true,
+        "category": "engineering-practice"
+      },
+      {
+        "name": "GitHub Changelog",
+        "url": "https://github.blog/changelog/feed/",
+        "enabled": true,
+        "category": "engineering-practice"
+      },
+      {
+        "name": "The Pragmatic Engineer",
+        "url": "https://newsletter.pragmaticengineer.com/feed",
+        "enabled": true,
+        "category": "engineering-practice"
       },
       {
         "name": "GitHub Trending - Daily",
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
-        "category": "github-trending"
-      },
-      {
-        "name": "Semianalysis",
-        "url": "https://newsletter.semianalysis.com/feed",
-        "enabled": true,
-        "category": "semiconductors"
-      },
-      {
-        "name": "LWN.net",
-        "url": "https://lwn.net/headlines/full_text?key=${LWN_KEY}",
-        "enabled": true,
-        "category": "linux-kernel"
+        "category": "discovery"
       }
     ],
     "reddit": {
-      "enabled": true,
-      "subreddits": [
-        {
-          "subreddit": "MachineLearning",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 10,
-          "min_score": 60
-        },
-        {
-          "subreddit": "LocalLLaMA",
-          "enabled": true,
-          "sort": "hot",
-          "time_filter": "day",
-          "fetch_limit": 10,
-          "min_score": 60
-        }
-      ],
+      "enabled": false,
+      "subreddits": [],
       "users": [],
-      "fetch_comments": 10
+      "fetch_comments": 0
     },
     "telegram": {
-      "enabled": true,
-      "channels": [
-        {
-          "channel": "zaihuapd",
-          "enabled": true,
-          "fetch_limit": 20
-        }
-      ]
+      "enabled": false,
+      "channels": []
     }
   },
   "filtering": {
-    "ai_score_threshold": 8.0,
-    "time_window_hours": 24
+    "ai_score_threshold": 7.0,
+    "time_window_hours": 24,
+    "max_items": null
   },
   "webhook": {
-    "enabled": true,
+    "enabled": false,
     "url_env": "HORIZON_WEBHOOK_URL",
     "delivery": "summary_and_items",
     "overview_position": "last",
