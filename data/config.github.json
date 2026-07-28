@@ -175,6 +175,48 @@
         "category": "engineering-practice"
       },
       {
+        "name": "InfoQ AI Coding",
+        "url": "https://feed.infoq.com/ai-coding/news/",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "GitHub AI & ML",
+        "url": "https://github.blog/ai-and-ml/feed/",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "JetBrains AI",
+        "url": "https://blog.jetbrains.com/ai/feed/",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "Microsoft for Developers - AI",
+        "url": "https://devblogs.microsoft.com/ai/feed/",
+        "enabled": true,
+        "category": "engineering-practice"
+      },
+      {
+        "name": "Cloudflare AI",
+        "url": "https://blog.cloudflare.com/tag/ai/rss/",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "name": "Docker AI",
+        "url": "https://www.docker.com/blog/tag/ai/feed/",
+        "enabled": true,
+        "category": "agent-ecosystem"
+      },
+      {
+        "name": "The Decoder",
+        "url": "https://the-decoder.com/feed/",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
         "name": "GitHub Trending - Daily",
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
