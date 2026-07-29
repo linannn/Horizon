@@ -211,6 +211,18 @@
         "category": "agent-ecosystem"
       },
       {
+        "name": "宝玉的分享",
+        "url": "https://www.baoyu.ai/feed.xml",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "DailyDawn",
+        "url": "https://dailydawn.dev/feed.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
         "name": "The Decoder",
         "url": "https://the-decoder.com/feed/",
         "enabled": true,
