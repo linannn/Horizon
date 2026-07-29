@@ -217,6 +217,36 @@
         "category": "ai-coding"
       },
       {
+        "name": "向阳乔木",
+        "url": "https://blog.qiaomu.ai/feed.xml",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "歸藏的 AI 工具箱",
+        "url": "https://wechat2rss.bestblogs.dev/feed/1c3e3571b1627d23ee9c64521a0b0a41d3fe2987.xml",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "AI 产品黄叔",
+        "url": "https://wechat2rss.bestblogs.dev/feed/1f1030491e15e5349aae42367513d6b3f70a8f8b.xml",
+        "enabled": true,
+        "category": "ai-coding"
+      },
+      {
+        "name": "数字生命卡兹克",
+        "url": "https://wechat2rss.bestblogs.dev/feed/ff621c3e98d6ae6fceb3397e57441ffc6ea3c17f.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
+        "name": "量子位",
+        "url": "https://wechat2rss.xlab.app/feed/7131b577c61365cb47e81000738c10d872685908.xml",
+        "enabled": true,
+        "category": "ai-news"
+      },
+      {
         "name": "DailyDawn",
         "url": "https://dailydawn.dev/feed.xml",
         "enabled": true,
