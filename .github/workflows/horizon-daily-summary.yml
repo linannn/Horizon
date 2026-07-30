@@ -2,8 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    # Temporary fresh-repository test. 09:47 UTC is 17:47 Asia/Shanghai.
-    - cron: '47 9 * * *'
+    # GitHub uses UTC. 01:07 UTC is 09:07 Asia/Shanghai.
+    - cron: '7 1 * * *'
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
