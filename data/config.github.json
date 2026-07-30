@@ -90,7 +90,7 @@
         "type": "repo_releases",
         "owner": "vercel",
         "repo": "ai",
-        "enabled": true,
+        "enabled": false,
         "category": "agent-ecosystem"
       },
       {
@@ -277,9 +277,39 @@
     }
   },
   "filtering": {
-    "ai_score_threshold": 7.0,
+    "ai_score_threshold": 6.0,
     "time_window_hours": 24,
-    "max_items": null
+    "focus_topics": [
+      "AI coding tools and coding agents",
+      "MCP and agent ecosystems",
+      "Practical AI engineering workflows and best practices",
+      "Developer-facing AI product releases and open-source tools"
+    ],
+    "max_items": 20,
+    "category_groups": {
+      "focus": {
+        "name": "AI Coding and Agents",
+        "limit": 12,
+        "categories": ["ai-coding", "agent-ecosystem"]
+      },
+      "ai-news": {
+        "name": "General AI News",
+        "limit": 3,
+        "categories": ["ai-news"]
+      },
+      "discovery": {
+        "name": "Discovery",
+        "limit": 2,
+        "categories": ["discovery"]
+      },
+      "engineering": {
+        "name": "Engineering Practice",
+        "limit": 3,
+        "categories": ["engineering-practice"]
+      }
+    },
+    "default_group": "other",
+    "default_group_limit": 1
   },
   "webhook": {
     "enabled": false,

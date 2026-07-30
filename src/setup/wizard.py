@@ -191,12 +191,14 @@ def select_sources(
 def build_config(
     ai_config: AIConfig,
     selected_sources: List[Dict],
+    focus_topics: Optional[List[str]] = None,
 ) -> Config:
     """Step 6: Assemble the final Config object.
 
     Args:
         ai_config: AI configuration.
         selected_sources: List of selected source dicts.
+        focus_topics: Reader interests used to prioritize scored content.
 
     Returns:
         Complete Config object.
@@ -281,6 +283,7 @@ def build_config(
     filtering = FilteringConfig(
         ai_score_threshold=7.0,
         time_window_hours=24,
+        focus_topics=focus_topics or [],
     )
 
     return Config(
@@ -417,7 +420,7 @@ def main():
         console.print("[yellow]No sources selected. Adding HackerNews as default.[/yellow]")
 
     # Step 6: Build config
-    config = build_config(ai_config, selected)
+    config = build_config(ai_config, selected, focus_topics=[interests])
 
     # Merge with existing config if present
     try:

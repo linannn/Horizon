@@ -63,11 +63,17 @@ def test_build_config_hackernews_follows_selection_and_count():
         [{"type": "rss", "config": {"name": "News", "url": "https://example.com/feed"}}],
     )
     default_config = wizard.build_config(ai, [])
+    focused_config = wizard.build_config(
+        ai,
+        [],
+        focus_topics=["AI coding tools", "MCP"],
+    )
 
     assert rss_config.sources.hackernews.enabled is False
     assert wizard._count_sources(rss_config) == 1
     assert default_config.sources.hackernews.enabled is True
     assert wizard._count_sources(default_config) == 1
+    assert focused_config.filtering.focus_topics == ["AI coding tools", "MCP"]
 
 
 def test_merge_configs_preserves_all_existing_configuration_and_deduplicates_lists():

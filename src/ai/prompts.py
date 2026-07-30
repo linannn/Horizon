@@ -57,6 +57,11 @@ Consider:
 - Relevance to software engineering, AI/ML, and systems research
 - Community discussion quality: insightful comments, diverse viewpoints, and debates increase value
 - Engagement signals: high upvotes/favorites with substantive discussion indicate community-validated importance
+
+When Reader Focus is provided:
+- Treat direct relevance to the reader's focus as a requirement for scores of 7 or higher
+- Content outside the reader's focus should normally score 6 or lower, even when broadly important
+- Prefer actionable tools, releases, techniques, and engineering practices within the reader's focus
 """
 
 CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON response with:
@@ -68,8 +73,10 @@ CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON resp
 Content:
 Title: {title}
 Source: {source}
+Source Category: {category}
 Author: {author}
 URL: {url}
+Reader Focus: {focus_topics}
 {content_section}
 {discussion_section}
 

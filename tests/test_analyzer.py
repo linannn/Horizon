@@ -121,6 +121,34 @@ def test_analyze_item_accepts_valid_result():
     assert item.ai_tags == ["ai", "research"]
 
 
+def test_analyze_item_includes_reader_focus_and_source_category():
+    result = {
+        "score": 8.0,
+        "reason": "Directly relevant",
+        "summary": "A useful coding-agent update",
+        "tags": ["ai-coding", "agents"],
+    }
+    captured = {}
+
+    async def complete(**kwargs):
+        captured.update(kwargs)
+        return json.dumps(result)
+
+    item = _make_item("rss:test:focused")
+    item.metadata["category"] = "ai-coding"
+
+    asyncio.run(
+        ContentAnalyzer(
+            SimpleNamespace(complete=complete),
+            focus_topics=["AI coding tools", "MCP"],
+        )._analyze_item(item)
+    )
+
+    assert "Source Category: ai-coding" in captured["user"]
+    assert "Reader Focus: AI coding tools, MCP" in captured["user"]
+    assert "scores of 7 or higher" in captured["system"]
+
+
 @pytest.mark.parametrize(
     "result",
     [

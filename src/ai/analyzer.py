@@ -28,8 +28,17 @@ class AnalysisResult(BaseModel):
 class ContentAnalyzer:
     """Analyzes content items using AI to determine importance."""
 
-    def __init__(self, ai_client: AIClient):
+    def __init__(
+        self,
+        ai_client: AIClient,
+        focus_topics: Optional[List[str]] = None,
+    ):
         self.client = ai_client
+        self.focus_topics = tuple(
+            topic.strip()
+            for topic in (focus_topics or [])
+            if topic.strip()
+        )
 
     @staticmethod
     def _parse_json_response(response: str) -> Optional[dict]:
@@ -143,8 +152,10 @@ class ContentAnalyzer:
         user_prompt = CONTENT_ANALYSIS_USER.format(
             title=item.title,
             source=f"{item.source_type.value}",
+            category=meta.get("category") or "Uncategorized",
             author=item.author or "Unknown",
             url=str(item.url),
+            focus_topics=", ".join(self.focus_topics) or "Not specified",
             content_section=content_section,
             discussion_section=discussion_section
         )
