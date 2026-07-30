@@ -2,9 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    # Temporary schedule registration check. Restore 09:07 after it runs.
-    - cron: '7 12 * * *'
-      timezone: 'Asia/Shanghai'
+    # Temporary UTC registration check. 05:07 UTC is 13:07 Asia/Shanghai.
+    - cron: '7 5 * * *'
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
