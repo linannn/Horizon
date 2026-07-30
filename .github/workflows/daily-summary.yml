@@ -2,8 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    # Temporary UTC registration check. 05:07 UTC is 13:07 Asia/Shanghai.
-    - cron: '7 5 * * *'
+    # GitHub scheduled workflows use UTC. 01:07 UTC is 09:07 Asia/Shanghai.
+    - cron: '7 1 * * *'
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
