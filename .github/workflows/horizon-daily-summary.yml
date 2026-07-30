@@ -2,8 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    # Temporary post-detach re-registration test. 09:07 UTC is 17:07 Asia/Shanghai.
-    - cron: '7 9 * * *'
+    # Temporary fresh-repository test. 09:47 UTC is 17:47 Asia/Shanghai.
+    - cron: '47 9 * * *'
   workflow_dispatch:      # Allow manual trigger
 
 jobs:
