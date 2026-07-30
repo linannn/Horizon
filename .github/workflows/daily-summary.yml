@@ -2,8 +2,8 @@ name: Daily Horizon Summary
 
 on:
   schedule:
-    # Temporary schedule registration check. Restore 09:07 after it runs.
-    - cron: '52 10 * * *'
+    # GitHub scheduled workflows run daily at 09:07 Asia/Shanghai.
+    - cron: '7 9 * * *'
       timezone: 'Asia/Shanghai'
   workflow_dispatch:      # Allow manual trigger
 
