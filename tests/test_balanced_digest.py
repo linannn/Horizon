@@ -95,6 +95,37 @@ def test_max_items_applies_after_group_limits() -> None:
     assert result.group_counts == {"ai": 2}
 
 
+def test_fill_remaining_slots_prevents_today_digest_from_stopping_at_six() -> None:
+    filtering = FilteringConfig(
+        max_items=20,
+        fill_remaining_slots=True,
+        category_groups={
+            "focus": CategoryGroupConfig(limit=12, categories=["ai"]),
+            "discovery": CategoryGroupConfig(limit=2, categories=["discovery"]),
+            "engineering": CategoryGroupConfig(limit=3, categories=["engineering"]),
+        },
+    )
+    items = [make_item("focus", 10.0, "ai")]
+    items.extend(
+        make_item(f"discovery-{index}", 9.9 - index * 0.1, "discovery")
+        for index in range(5)
+    )
+    items.extend(
+        make_item(f"engineering-{index}", 9.4 - index * 0.1, "engineering")
+        for index in range(8)
+    )
+
+    result = make_orchestrator(filtering).apply_balanced_digest(items)
+
+    assert len(result.items) == 14
+    assert [item.ai_score for item in result.items] == sorted(
+        [item.ai_score for item in items],
+        reverse=True,
+    )
+    assert result.group_counts == {"focus": 1, "discovery": 5, "engineering": 8}
+    assert result.backfill_count == 8
+
+
 def test_max_items_works_without_category_groups() -> None:
     filtering = FilteringConfig(max_items=1)
     items = [make_item("lower", 7.0, None), make_item("higher", 9.0, None)]

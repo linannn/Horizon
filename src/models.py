@@ -486,6 +486,7 @@ class FilteringConfig(BaseModel):
     focus_topics: List[str] = Field(default_factory=list)
     max_items: Optional[int] = Field(default=None, gt=0)
     category_groups: Dict[str, CategoryGroupConfig] = Field(default_factory=dict)
+    fill_remaining_slots: bool = False
     default_group: str = "other"
     default_group_limit: Optional[int] = Field(default=None, gt=0)
 

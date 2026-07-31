@@ -133,6 +133,7 @@
     "time_window_hours": 24,
     "max_items": null,
     "category_groups": {},
+    "fill_remaining_slots": false,
     "default_group": "other",
     "default_group_limit": null
   },

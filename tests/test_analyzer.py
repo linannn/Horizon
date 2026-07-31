@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 import src.ai.analyzer as analyzer_module
 from src.ai.analyzer import ContentAnalyzer
+from src.ai.prompts import TOPIC_DEDUP_SYSTEM
 from src.models import ContentItem, SourceType
 
 
@@ -147,6 +148,13 @@ def test_analyze_item_includes_reader_focus_and_source_category():
     assert "Source Category: ai-coding" in captured["user"]
     assert "Reader Focus: AI coding tools, MCP" in captured["user"]
     assert "scores of 7 or higher" in captured["system"]
+    assert "must score 5 or lower" in captured["system"]
+    assert "actionable tool, workflow, or engineering technique" in captured["system"]
+
+
+def test_topic_dedup_prompt_collapses_overlapping_announcement_families():
+    assert "same underlying feature rollout or announcement family" in TOPIC_DEDUP_SYSTEM
+    assert "key facts substantially overlap" in TOPIC_DEDUP_SYSTEM
 
 
 @pytest.mark.parametrize(

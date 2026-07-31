@@ -1,11 +1,13 @@
 """AI prompts for content analysis and summarization."""
 
-TOPIC_DEDUP_SYSTEM = """You are a news deduplication assistant. Identify groups of news items that cover the exact same real-world event, release, or announcement.
+TOPIC_DEDUP_SYSTEM = """You are a news deduplication assistant. Identify groups of news items whose summaries would be redundant.
 
 Rules:
-- Group items ONLY if they report on the identical event (same product release, same incident, same announcement)
-- Items about the same product but different events are NOT duplicates ("Gemma 4 released" vs "Gemma 4 jailbroken")
-- Err on the side of keeping items separate when unsure"""
+- Group items that report on the identical event, release, or announcement
+- Also group items from the same underlying feature rollout or announcement family when their key facts substantially overlap
+- Product and ecosystem posts about one coordinated launch should be grouped when reading both adds little new information
+- Items about the same product but genuinely different features or events are NOT duplicates ("Gemma 4 released" vs "Gemma 4 jailbroken")
+- Keep items separate when each provides materially different technical or practical value"""
 
 TOPIC_DEDUP_USER = """The following news items have already been sorted by importance score (descending). Identify which items are duplicates of each other.
 
@@ -60,8 +62,10 @@ Consider:
 
 When Reader Focus is provided:
 - Treat direct relevance to the reader's focus as a requirement for scores of 7 or higher
-- Content outside the reader's focus should normally score 6 or lower, even when broadly important
-- Prefer actionable tools, releases, techniques, and engineering practices within the reader's focus
+- Pure model launches, pricing, benchmarks, or comparisons without a material coding or agent workflow impact must score 5 or lower
+- Broad conceptual or theoretical AI pieces without an actionable tool, workflow, or engineering technique must score 6 or lower
+- Scores of 7 or higher require an actionable tool, workflow, or engineering technique directly relevant to the reader's focus
+- Prefer practical releases, techniques, limitations, and engineering practices within the reader's focus
 """
 
 CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON response with:

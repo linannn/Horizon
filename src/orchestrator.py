@@ -84,6 +84,7 @@ class BalancedDigestResult:
     group_counts: Dict[str, int] = field(default_factory=dict)
     group_limits: Dict[str, Optional[int]] = field(default_factory=dict)
     duplicate_categories: List[str] = field(default_factory=list)
+    backfill_count: int = 0
 
 
 @dataclass
@@ -727,6 +728,7 @@ class HorizonOrchestrator:
                 )
 
         selected: List[tuple[ContentItem, str]] = []
+        overflow: List[tuple[ContentItem, str]] = []
         group_counts: Dict[str, int] = defaultdict(int)
         default_group = filtering.default_group
 
@@ -744,13 +746,23 @@ class HorizonOrchestrator:
                 limit = filtering.default_group_limit
 
             if limit is not None and group_counts[group_key] >= limit:
+                overflow.append((item, group_key))
                 continue
 
             selected.append((item, group_key))
             group_counts[group_key] += 1
 
+        backfill_count = 0
         if max_items is not None:
             selected = selected[:max_items]
+            if filtering.fill_remaining_slots and len(selected) < max_items:
+                backfilled = overflow[: max_items - len(selected)]
+                selected.extend(backfilled)
+                backfill_count = len(backfilled)
+                selected.sort(
+                    key=lambda entry: entry[0].ai_score or 0,
+                    reverse=True,
+                )
 
         final_counts: Dict[str, int] = defaultdict(int)
         for _, group_key in selected:
@@ -765,6 +777,10 @@ class HorizonOrchestrator:
             self.console.print(
                 f"⚖️ Balanced digest selected {len(selected)}/{len(items)} items"
             )
+            if backfill_count:
+                self.console.print(
+                    f"      • Backfilled unused slots: {backfill_count}"
+                )
             for group_key, group in groups.items():
                 label = group.name or group_key
                 self.console.print(
@@ -791,6 +807,7 @@ class HorizonOrchestrator:
             group_counts=dict(final_counts),
             group_limits=group_limits,
             duplicate_categories=sorted(set(duplicate_categories)),
+            backfill_count=backfill_count,
         )
 
     async def _expand_twitter_discussion(self, items: List[ContentItem]) -> None:

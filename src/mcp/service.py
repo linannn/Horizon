@@ -273,6 +273,7 @@ class HorizonPipelineService:
                 "ai_score_threshold": ctx.config.filtering.ai_score_threshold,
                 "time_window_hours": ctx.config.filtering.time_window_hours,
                 "max_items": ctx.config.filtering.max_items,
+                "fill_remaining_slots": ctx.config.filtering.fill_remaining_slots,
                 "category_groups": {
                     key: group.model_dump(mode="json")
                     for key, group in ctx.config.filtering.category_groups.items()

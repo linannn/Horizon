@@ -286,6 +286,7 @@
       "Developer-facing AI product releases and open-source tools"
     ],
     "max_items": 20,
+    "fill_remaining_slots": true,
     "category_groups": {
       "focus": {
         "name": "AI Coding and Agents",
