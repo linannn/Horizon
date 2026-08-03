@@ -102,6 +102,7 @@ def test_analyze_batch_concurrent_preserves_order(monkeypatch):
 def test_analyze_item_accepts_valid_result():
     result = {
         "score": 8.5,
+        "focus_relevant": True,
         "reason": "Relevant",
         "summary": "A useful update",
         "tags": ["ai", "research"],
@@ -117,6 +118,7 @@ def test_analyze_item_accepts_valid_result():
     asyncio.run(ContentAnalyzer(client)._analyze_item(item))
 
     assert item.ai_score == 8.5
+    assert item.ai_focus_relevant is True
     assert item.ai_reason == "Relevant"
     assert item.ai_summary == "A useful update"
     assert item.ai_tags == ["ai", "research"]
@@ -125,6 +127,7 @@ def test_analyze_item_accepts_valid_result():
 def test_analyze_item_includes_reader_focus_and_source_category():
     result = {
         "score": 8.0,
+        "focus_relevant": True,
         "reason": "Directly relevant",
         "summary": "A useful coding-agent update",
         "tags": ["ai-coding", "agents"],
@@ -147,9 +150,10 @@ def test_analyze_item_includes_reader_focus_and_source_category():
 
     assert "Source Category: ai-coding" in captured["user"]
     assert "Reader Focus: AI coding tools, MCP" in captured["user"]
-    assert "scores of 7 or higher" in captured["system"]
+    assert "Set focus_relevant to true only" in captured["system"]
     assert "must score 5 or lower" in captured["system"]
     assert "actionable tool, workflow, or engineering technique" in captured["system"]
+    assert '"focus_relevant"' in captured["user"]
 
 
 def test_topic_dedup_prompt_collapses_overlapping_announcement_families():

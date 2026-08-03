@@ -277,7 +277,8 @@
     }
   },
   "filtering": {
-    "ai_score_threshold": 6.0,
+    "ai_score_threshold": 5.0,
+    "core_score_threshold": 7.0,
     "time_window_hours": 24,
     "focus_topics": [
       "AI coding tools and coding agents",
@@ -286,11 +287,13 @@
       "Developer-facing AI product releases and open-source tools"
     ],
     "max_items": 20,
+    "max_items_per_source": 2,
     "fill_remaining_slots": true,
     "category_groups": {
       "focus": {
         "name": "AI Coding and Agents",
         "limit": 12,
+        "allow_backfill": true,
         "categories": ["ai-coding", "agent-ecosystem"]
       },
       "ai-news": {
@@ -306,6 +309,7 @@
       "engineering": {
         "name": "Engineering Practice",
         "limit": 3,
+        "allow_backfill": true,
         "categories": ["engineering-practice"]
       }
     },

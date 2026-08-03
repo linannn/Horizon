@@ -53,6 +53,9 @@ LABELS = {
         "discussion": "Discussion",
         "references": "References",
         "tags": "Tags",
+        "tier": "Priority",
+        "core": "Core",
+        "watch": "Worth Watching",
         "selected_items": "From {total} items, {selected} important content pieces were selected",
         "empty_analyzed": "Analyzed {total} items, but none met the importance threshold.",
         "empty_body": (
@@ -73,6 +76,9 @@ LABELS = {
         "discussion": "社区讨论",
         "references": "参考链接",
         "tags": "标签",
+        "tier": "级别",
+        "core": "核心必看",
+        "watch": "值得关注",
         "selected_items": "从 {total} 条内容中筛选出 {selected} 条重要资讯。",
         "empty_analyzed": "已分析 {total} 条内容，但没有达到重要性阈值的条目。",
         "empty_body": (
@@ -92,8 +98,8 @@ LABELS = {
 class DailySummarizer:
     """Generates daily Markdown summaries from pre-analyzed content items."""
 
-    def __init__(self):
-        pass
+    def __init__(self, core_score_threshold: float = 7.0):
+        self.core_score_threshold = core_score_threshold
 
     async def generate_summary(
         self,
@@ -253,6 +259,9 @@ class DailySummarizer:
         lines = [
             f'<a id="item-{index}"></a>',
             f"## {title_link} \u2b50\ufe0f {score}/10",  # ⭐️
+            "",
+            f"**{labels['tier']}**: "
+            f"{labels['core'] if (item.ai_score or 0) >= self.core_score_threshold else labels['watch']}",
             "",
             summary,
             "",

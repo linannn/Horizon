@@ -20,6 +20,7 @@ class AnalysisResult(BaseModel):
     """Validated structured result returned by the analysis model."""
 
     score: float = Field(ge=0, le=10, allow_inf_nan=False)
+    focus_relevant: bool
     reason: str
     summary: str
     tags: list[str]
@@ -175,6 +176,7 @@ class ContentAnalyzer:
         if result is None:
             print(f"Warning: could not parse analysis response for {item.id}, using defaults")
             item.ai_score = 0.0
+            item.ai_focus_relevant = not self.focus_topics
             item.ai_reason = "Analysis response parse failed"
             item.ai_summary = item.title
             item.ai_tags = []
@@ -182,6 +184,7 @@ class ContentAnalyzer:
 
         # Update item with analysis results
         item.ai_score = result.score
+        item.ai_focus_relevant = result.focus_relevant
         item.ai_reason = result.reason
         item.ai_summary = result.summary
         item.ai_tags = result.tags

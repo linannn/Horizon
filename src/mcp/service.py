@@ -271,8 +271,10 @@ class HorizonPipelineService:
             },
             "filtering": {
                 "ai_score_threshold": ctx.config.filtering.ai_score_threshold,
+                "core_score_threshold": ctx.config.filtering.core_score_threshold,
                 "time_window_hours": ctx.config.filtering.time_window_hours,
                 "max_items": ctx.config.filtering.max_items,
+                "max_items_per_source": ctx.config.filtering.max_items_per_source,
                 "fill_remaining_slots": ctx.config.filtering.fill_remaining_slots,
                 "category_groups": {
                     key: group.model_dump(mode="json")
@@ -430,6 +432,9 @@ class HorizonPipelineService:
             {
                 "filtered_count": len(important_items),
                 "filter_threshold": effective_threshold,
+                "focus_relevance_removed": getattr(
+                    filtering_result, "focus_relevance_removed", 0
+                ),
                 "topic_dedup_enabled": topic_dedup,
                 "topic_dedup_removed": filtering_result.topic_dedup_removed,
                 "balanced_digest_enabled": balanced_enabled,
@@ -444,6 +449,9 @@ class HorizonPipelineService:
             "run_id": run_id,
             "kept": len(important_items),
             "threshold": effective_threshold,
+            "removed_by_focus_relevance": getattr(
+                filtering_result, "focus_relevance_removed", 0
+            ),
             "removed_by_topic_dedup": filtering_result.topic_dedup_removed,
             "removed_by_balanced_digest": (
                 filtering_result.topic_dedup_count - len(important_items)

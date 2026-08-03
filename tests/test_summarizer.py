@@ -124,6 +124,25 @@ def test_generate_summary_zh_uses_localized_selection_header_and_numeric_date():
     assert "Apr 25, 08:00" not in result
 
 
+def test_generate_summary_labels_core_and_watch_items():
+    summarizer = DailySummarizer(core_score_threshold=7.0)
+    core = _make_item(1)
+    watch = _make_item(2)
+    watch.ai_score = 5.0
+
+    result = _run_async(
+        summarizer.generate_summary(
+            [core, watch],
+            date="2026-04-25",
+            total_fetched=10,
+            language="zh",
+        )
+    )
+
+    assert "**级别**: 核心必看" in result
+    assert "**级别**: 值得关注" in result
+
+
 def test_generate_empty_summary_zh_uses_localized_analyzed_line():
     summarizer = DailySummarizer()
 

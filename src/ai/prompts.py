@@ -61,15 +61,19 @@ Consider:
 - Engagement signals: high upvotes/favorites with substantive discussion indicate community-validated importance
 
 When Reader Focus is provided:
-- Treat direct relevance to the reader's focus as a requirement for scores of 7 or higher
+- Judge focus relevance separately from general importance
+- Set focus_relevant to true only when the item directly provides an AI coding tool, coding-agent capability, MCP/agent ecosystem update, practical AI engineering workflow, or developer-facing AI tool release
+- General AI industry news, model-only news, and AI security news are not focus relevant unless they materially change a coding or agent workflow
 - Pure model launches, pricing, benchmarks, or comparisons without a material coding or agent workflow impact must score 5 or lower
 - Broad conceptual or theoretical AI pieces without an actionable tool, workflow, or engineering technique must score 6 or lower
 - Scores of 7 or higher require an actionable tool, workflow, or engineering technique directly relevant to the reader's focus
 - Prefer practical releases, techniques, limitations, and engineering practices within the reader's focus
+- When Reader Focus is not specified, set focus_relevant to true
 """
 
 CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON response with:
 - score (0-10): Importance score
+- focus_relevant: Whether the item directly matches Reader Focus
 - reason: Brief explanation for the score (mention discussion quality if comments are provided)
 - summary: One-sentence summary of the content
 - tags: Relevant topic tags (3-5 tags)
@@ -87,6 +91,7 @@ Reader Focus: {focus_topics}
 Respond with valid JSON only:
 {{
   "score": <number>,
+  "focus_relevant": <true-or-false>,
   "reason": "<explanation>",
   "summary": "<one-sentence-summary>",
   "tags": ["<tag1>", "<tag2>", ...]

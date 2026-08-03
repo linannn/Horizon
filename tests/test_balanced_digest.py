@@ -102,7 +102,11 @@ def test_fill_remaining_slots_prevents_today_digest_from_stopping_at_six() -> No
         category_groups={
             "focus": CategoryGroupConfig(limit=12, categories=["ai"]),
             "discovery": CategoryGroupConfig(limit=2, categories=["discovery"]),
-            "engineering": CategoryGroupConfig(limit=3, categories=["engineering"]),
+            "engineering": CategoryGroupConfig(
+                limit=3,
+                categories=["engineering"],
+                allow_backfill=True,
+            ),
         },
     )
     items = [make_item("focus", 10.0, "ai")]
@@ -117,13 +121,55 @@ def test_fill_remaining_slots_prevents_today_digest_from_stopping_at_six() -> No
 
     result = make_orchestrator(filtering).apply_balanced_digest(items)
 
-    assert len(result.items) == 14
-    assert [item.ai_score for item in result.items] == sorted(
-        [item.ai_score for item in items],
-        reverse=True,
+    assert len(result.items) == 11
+    assert result.group_counts == {"focus": 1, "discovery": 2, "engineering": 8}
+    assert result.backfill_count == 5
+
+
+def test_balanced_digest_limits_items_from_one_source() -> None:
+    filtering = FilteringConfig(max_items=20, max_items_per_source=2)
+    items = [
+        make_item("decoder-top", 10.0, "ai-news"),
+        make_item("decoder-second", 9.0, "ai-news"),
+        make_item("decoder-third", 8.0, "ai-news"),
+        make_item("other", 7.0, "ai-news"),
+    ]
+    for item in items[:3]:
+        item.metadata["feed_name"] = "The Decoder"
+    items[3].metadata["feed_name"] = "Other"
+
+    result = make_orchestrator(filtering).apply_balanced_digest(items)
+
+    assert [item.id for item in result.items] == [
+        "decoder-top",
+        "decoder-second",
+        "other",
+    ]
+    assert result.source_limit_removed == 1
+
+
+def test_filter_items_requires_reader_focus_relevance() -> None:
+    filtering = FilteringConfig(
+        ai_score_threshold=5.0,
+        focus_topics=["AI coding tools"],
     )
-    assert result.group_counts == {"focus": 1, "discovery": 5, "engineering": 8}
-    assert result.backfill_count == 8
+    relevant = make_item("relevant", 5.0, "ai-coding")
+    relevant.ai_focus_relevant = True
+    unrelated = make_item("unrelated", 10.0, "ai-news")
+    unrelated.ai_focus_relevant = False
+    unknown = make_item("unknown", 10.0, "ai-news")
+
+    result = asyncio.run(
+        make_orchestrator(filtering).filter_items(
+            [unrelated, unknown, relevant],
+            topic_dedup=False,
+            log=False,
+        )
+    )
+
+    assert [item.id for item in result.items] == ["relevant"]
+    assert result.focus_relevance_count == 1
+    assert result.focus_relevance_removed == 2
 
 
 def test_max_items_works_without_category_groups() -> None:

@@ -59,6 +59,7 @@ class ContentItem(BaseModel):
 
     # AI analysis results
     ai_score: Optional[float] = None  # 0-10 importance score
+    ai_focus_relevant: Optional[bool] = None
     ai_reason: Optional[str] = None
     ai_summary: Optional[str] = None
     ai_tags: List[str] = Field(default_factory=list)
@@ -476,15 +477,18 @@ class CategoryGroupConfig(BaseModel):
     name: Optional[str] = None
     limit: int = Field(gt=0)
     categories: List[str] = Field(min_length=1)
+    allow_backfill: bool = False
 
 
 class FilteringConfig(BaseModel):
     """Content filtering configuration."""
 
     ai_score_threshold: float = 7.0
+    core_score_threshold: float = 7.0
     time_window_hours: int = 24
     focus_topics: List[str] = Field(default_factory=list)
     max_items: Optional[int] = Field(default=None, gt=0)
+    max_items_per_source: Optional[int] = Field(default=None, gt=0)
     category_groups: Dict[str, CategoryGroupConfig] = Field(default_factory=dict)
     fill_remaining_slots: bool = False
     default_group: str = "other"

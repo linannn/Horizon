@@ -461,12 +461,15 @@ Content is scored 0-10:
 {
   "filtering": {
     "ai_score_threshold": 7.0,
+    "core_score_threshold": 7.0,
     "time_window_hours": 24,
     "max_items": 20,
+    "max_items_per_source": 2,
     "category_groups": {
       "ai": {
         "name": "AI / Machine Learning",
         "limit": 5,
+        "allow_backfill": true,
         "categories": ["ai-news", "ai-tools", "machine-learning", "llm"]
       },
       "finance": {
@@ -482,12 +485,18 @@ Content is scored 0-10:
 ```
 
 - `ai_score_threshold`: Only include content scoring >= this value
+- `core_score_threshold`: Score used to label selected items as core instead of
+  worth watching
 - `time_window_hours`: Fetch content from last N hours
 - `max_items`: Optional final cap after all group limits are applied
+- `max_items_per_source`: Optional cap for one feed, repository, or other
+  sub-source
 - `category_groups`: Optional map of quota groups. Each group requires a positive
   `limit` and a non-empty `categories` list. Items within each group are kept by
   AI score, highest first.
 - `category_groups.*.name`: Optional display name used in run logs
+- `category_groups.*.allow_backfill`: Allow overflow from this group to fill
+  unused `max_items` slots. Other group limits remain hard.
 - `default_group`: Group key for items whose category does not match any
   configured group. Default is `other`.
 - `default_group_limit`: Optional positive limit for unmatched items. If omitted,

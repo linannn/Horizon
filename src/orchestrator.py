@@ -85,6 +85,7 @@ class BalancedDigestResult:
     group_limits: Dict[str, Optional[int]] = field(default_factory=dict)
     duplicate_categories: List[str] = field(default_factory=list)
     backfill_count: int = 0
+    source_limit_removed: int = 0
 
 
 @dataclass
@@ -92,6 +93,8 @@ class FilteringPipelineResult:
     """Items and statistics from score, topic, and digest filtering."""
 
     items: List[ContentItem]
+    focus_relevance_count: int
+    focus_relevance_removed: int
     threshold_count: int
     topic_dedup_count: int
     topic_dedup_removed: int
@@ -257,7 +260,9 @@ class HorizonOrchestrator:
             # 7. Generate and save daily summaries for each configured language
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             for lang in self.config.ai.languages:
-                summarizer = DailySummarizer()
+                summarizer = DailySummarizer(
+                    core_score_threshold=self.config.filtering.core_score_threshold
+                )
                 summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
 
                 # Save to data/summaries/
@@ -648,17 +653,40 @@ class HorizonOrchestrator:
             if threshold is not None
             else self.config.filtering.ai_score_threshold
         )
-        threshold_items = [
+        focus_required = bool(self.config.filtering.focus_topics)
+        focus_items = [
             item
             for item in items
+            if not focus_required or item.ai_focus_relevant is True
+        ]
+        focus_relevance_removed = len(items) - len(focus_items)
+
+        threshold_items = [
+            item
+            for item in focus_items
             if item.ai_score is not None and item.ai_score >= effective_threshold
         ]
         threshold_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
 
         if log:
+            if focus_required:
+                self.console.print(
+                    f"🎯 {len(focus_items)}/{len(items)} items directly match Reader Focus "
+                    f"({focus_relevance_removed} removed)"
+                )
             self.console.print(
                 f"⭐️ {len(threshold_items)} items scored ≥ {effective_threshold}\n"
             )
+            analyzed_counts = self._category_counts(items)
+            focus_counts = self._category_counts(focus_items)
+            threshold_counts = self._category_counts(threshold_items)
+            for category in sorted(analyzed_counts):
+                self.console.print(
+                    f"      • {category}: analyzed {analyzed_counts[category]} "
+                    f"→ focus {focus_counts.get(category, 0)} "
+                    f"→ score {threshold_counts.get(category, 0)}"
+                )
+            self.console.print("")
 
         deduped_items = threshold_items
         if topic_dedup and deduped_items:
@@ -678,6 +706,8 @@ class HorizonOrchestrator:
         )
         return FilteringPipelineResult(
             items=balanced_digest.items,
+            focus_relevance_count=len(focus_items),
+            focus_relevance_removed=focus_relevance_removed,
             threshold_count=len(threshold_items),
             topic_dedup_count=len(deduped_items),
             topic_dedup_removed=topic_dedup_removed,
@@ -699,8 +729,9 @@ class HorizonOrchestrator:
         filtering = self.config.filtering
         groups = filtering.category_groups
         max_items = filtering.max_items
+        max_items_per_source = filtering.max_items_per_source
 
-        if not groups and max_items is None:
+        if not groups and max_items is None and max_items_per_source is None:
             return BalancedDigestResult(items=items)
 
         sorted_items = sorted(
@@ -708,6 +739,19 @@ class HorizonOrchestrator:
             key=lambda item: item.ai_score or 0,
             reverse=True,
         )
+
+        source_limit_removed = 0
+        if max_items_per_source is not None:
+            source_counts: Dict[str, int] = defaultdict(int)
+            source_limited_items: List[ContentItem] = []
+            for item in sorted_items:
+                source_key = f"{item.source_type.value}/{self._sub_source_label(item)}"
+                if source_counts[source_key] >= max_items_per_source:
+                    source_limit_removed += 1
+                    continue
+                source_counts[source_key] += 1
+                source_limited_items.append(item)
+            sorted_items = source_limited_items
 
         category_to_group: Dict[str, str] = {}
         duplicate_categories: List[str] = []
@@ -756,7 +800,12 @@ class HorizonOrchestrator:
         if max_items is not None:
             selected = selected[:max_items]
             if filtering.fill_remaining_slots and len(selected) < max_items:
-                backfilled = overflow[: max_items - len(selected)]
+                eligible_overflow = [
+                    entry
+                    for entry in overflow
+                    if entry[1] in groups and groups[entry[1]].allow_backfill
+                ]
+                backfilled = eligible_overflow[: max_items - len(selected)]
                 selected.extend(backfilled)
                 backfill_count = len(backfilled)
                 selected.sort(
@@ -777,6 +826,11 @@ class HorizonOrchestrator:
             self.console.print(
                 f"⚖️ Balanced digest selected {len(selected)}/{len(items)} items"
             )
+            if source_limit_removed:
+                self.console.print(
+                    f"      • Source cap removed: {source_limit_removed} "
+                    f"(max {max_items_per_source} per source)"
+                )
             if backfill_count:
                 self.console.print(
                     f"      • Backfilled unused slots: {backfill_count}"
@@ -808,7 +862,17 @@ class HorizonOrchestrator:
             group_limits=group_limits,
             duplicate_categories=sorted(set(duplicate_categories)),
             backfill_count=backfill_count,
+            source_limit_removed=source_limit_removed,
         )
+
+    @staticmethod
+    def _category_counts(items: List[ContentItem]) -> Dict[str, int]:
+        """Count items by configured source category for pipeline diagnostics."""
+        counts: Dict[str, int] = defaultdict(int)
+        for item in items:
+            category = item.metadata.get("category")
+            counts[category if isinstance(category, str) else "uncategorized"] += 1
+        return dict(counts)
 
     async def _expand_twitter_discussion(self, items: List[ContentItem]) -> None:
         """Second-stage: fetch reply text for important Twitter items and re-analyze.
@@ -925,6 +989,8 @@ class HorizonOrchestrator:
         """
         self.console.print("📝 Generating daily summary...")
 
-        summarizer = DailySummarizer()
+        summarizer = DailySummarizer(
+            core_score_threshold=self.config.filtering.core_score_threshold
+        )
 
         return await summarizer.generate_summary(items, date, total_fetched, language=language)

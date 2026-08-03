@@ -267,10 +267,13 @@ results. Categories come from source configuration such as
 {
   "filtering": {
     "ai_score_threshold": 6.0,
+    "core_score_threshold": 7.0,
     "max_items": 20,
+    "max_items_per_source": 2,
     "category_groups": {
       "ai": {
         "limit": 5,
+        "allow_backfill": true,
         "categories": ["ai-news", "ai-tools", "machine-learning"]
       },
       "finance": {
