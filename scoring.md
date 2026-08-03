@@ -39,17 +39,23 @@ Engagement metadata is source-specific: HN provides score and comment count, Red
 
 ## Filtering
 
-After scoring, items are filtered by `filtering.ai_score_threshold` (default: `7.0`) and sorted by score descending. Optional balanced digest quotas are then applied before enrichment.
+When `focus_topics` is configured, items must first be marked directly relevant
+to that focus. Relevant items are then filtered by
+`filtering.ai_score_threshold` (default: `7.0`) and sorted by score descending.
+Optional balanced digest quotas are applied before enrichment.
 
 ```json
 {
   "filtering": {
     "ai_score_threshold": 7.0,
+    "core_score_threshold": 7.0,
     "time_window_hours": 24,
     "max_items": 20,
+    "max_items_per_source": 2,
     "category_groups": {
       "ai": {
         "limit": 5,
+        "allow_backfill": true,
         "categories": ["ai-news", "ai-tools", "machine-learning"]
       }
     }
@@ -58,8 +64,9 @@ After scoring, items are filtered by `filtering.ai_score_threshold` (default: `7
 ```
 
 `category_groups` limits each configured category group independently.
-`max_items` caps the merged result. Both fields are optional; without them,
-scoring and filtering behave as before.
+`allow_backfill` makes only that group's overflow eligible for unused slots.
+`max_items_per_source` prevents a single feed or repository from dominating.
+These fields are optional.
 
 Items scoring 9.0 or above are featured in the "Today's Highlights" section of the summary.
 
