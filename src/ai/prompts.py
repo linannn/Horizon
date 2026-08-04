@@ -6,6 +6,7 @@ Rules:
 - Group items that report on the identical event, release, or announcement
 - Also group items from the same underlying feature rollout or announcement family when their key facts substantially overlap
 - Product and ecosystem posts about one coordinated launch should be grouped when reading both adds little new information
+- Group an original technique with articles, interviews, or posts that mainly quote, translate, or restate that same technique without adding material implementation detail
 - Items about the same product but genuinely different features or events are NOT duplicates ("Gemma 4 released" vs "Gemma 4 jailbroken")
 - Keep items separate when each provides materially different technical or practical value"""
 
@@ -69,11 +70,19 @@ When Reader Focus is provided:
 - Scores of 7 or higher require an actionable tool, workflow, or engineering technique directly relevant to the reader's focus
 - Prefer practical releases, techniques, limitations, and engineering practices within the reader's focus
 - When Reader Focus is not specified, set focus_relevant to true
+
+Judge substantive value separately:
+- Set substantive to true only when the item contains at least one concrete, reusable, or decision-relevant takeaway backed by specific details
+- Concrete product changes, reusable workflows, implementation details, measured engineering lessons, and specific limitations can be substantive
+- Set substantive to false for demos or vibe experiments without reusable implementation detail, promotional or opinion-only posts, and release entries whose body contains no meaningful changelog
+- A fun prototype or impressive output alone is not substantive
+- Non-substantive items must score 4 or lower
 """
 
 CONTENT_ANALYSIS_USER = """Analyze the following content and provide a JSON response with:
 - score (0-10): Importance score
 - focus_relevant: Whether the item directly matches Reader Focus
+- substantive: Whether it contains concrete, reusable, decision-relevant information
 - reason: Brief explanation for the score (mention discussion quality if comments are provided)
 - summary: One-sentence summary of the content
 - tags: Relevant topic tags (3-5 tags)
@@ -92,6 +101,7 @@ Respond with valid JSON only:
 {{
   "score": <number>,
   "focus_relevant": <true-or-false>,
+  "substantive": <true-or-false>,
   "reason": "<explanation>",
   "summary": "<one-sentence-summary>",
   "tags": ["<tag1>", "<tag2>", ...]

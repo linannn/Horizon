@@ -435,6 +435,9 @@ class HorizonPipelineService:
                 "focus_relevance_removed": getattr(
                     filtering_result, "focus_relevance_removed", 0
                 ),
+                "substantive_removed": getattr(
+                    filtering_result, "substantive_removed", 0
+                ),
                 "topic_dedup_enabled": topic_dedup,
                 "topic_dedup_removed": filtering_result.topic_dedup_removed,
                 "balanced_digest_enabled": balanced_enabled,
@@ -451,6 +454,9 @@ class HorizonPipelineService:
             "threshold": effective_threshold,
             "removed_by_focus_relevance": getattr(
                 filtering_result, "focus_relevance_removed", 0
+            ),
+            "removed_by_substantive_gate": getattr(
+                filtering_result, "substantive_removed", 0
             ),
             "removed_by_topic_dedup": filtering_result.topic_dedup_removed,
             "removed_by_balanced_digest": (

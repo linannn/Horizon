@@ -95,6 +95,8 @@ class FilteringPipelineResult:
     items: List[ContentItem]
     focus_relevance_count: int
     focus_relevance_removed: int
+    substantive_count: int
+    substantive_removed: int
     threshold_count: int
     topic_dedup_count: int
     topic_dedup_removed: int
@@ -567,7 +569,8 @@ class HorizonOrchestrator:
 
         This is a stable stage helper for integrations such as MCP.
 
-        Sends all item titles, tags, and summaries to AI in a single call.
+        Sends item titles, sources, URLs, excerpts, tags, and summaries to AI
+        in a single call.
         Items must already be sorted by ai_score descending so that the first
         item in each duplicate group is always the highest-scored one.
         Content (comments) from duplicate items is merged into the primary.
@@ -585,7 +588,17 @@ class HorizonOrchestrator:
         for i, item in enumerate(items):
             tags = ", ".join(item.ai_tags) if item.ai_tags else "—"
             summary = item.ai_summary or "—"
-            lines.append(f"[{i}] {item.title}\n    Tags: {tags}\n    Summary: {summary}")
+            content = (item.content or "").split("--- Top Comments ---", 1)[0]
+            excerpt = " ".join(content.split())[:500] or "—"
+            source = f"{item.source_type.value}:{self._sub_source_label(item)}"
+            lines.append(
+                f"[{i}] {item.title}\n"
+                f"    Source: {source}\n"
+                f"    URL: {item.url}\n"
+                f"    Tags: {tags}\n"
+                f"    Summary: {summary}\n"
+                f"    Excerpt: {excerpt}"
+            )
         items_text = "\n\n".join(lines)
 
         try:
@@ -661,9 +674,16 @@ class HorizonOrchestrator:
         ]
         focus_relevance_removed = len(items) - len(focus_items)
 
-        threshold_items = [
+        substantive_items = [
             item
             for item in focus_items
+            if not focus_required or item.ai_substantive is True
+        ]
+        substantive_removed = len(focus_items) - len(substantive_items)
+
+        threshold_items = [
+            item
+            for item in substantive_items
             if item.ai_score is not None and item.ai_score >= effective_threshold
         ]
         threshold_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
@@ -674,16 +694,22 @@ class HorizonOrchestrator:
                     f"🎯 {len(focus_items)}/{len(items)} items directly match Reader Focus "
                     f"({focus_relevance_removed} removed)"
                 )
+                self.console.print(
+                    f"🧱 {len(substantive_items)}/{len(focus_items)} focus items contain "
+                    f"substantive value ({substantive_removed} removed)"
+                )
             self.console.print(
                 f"⭐️ {len(threshold_items)} items scored ≥ {effective_threshold}\n"
             )
             analyzed_counts = self._category_counts(items)
             focus_counts = self._category_counts(focus_items)
+            substantive_counts = self._category_counts(substantive_items)
             threshold_counts = self._category_counts(threshold_items)
             for category in sorted(analyzed_counts):
                 self.console.print(
                     f"      • {category}: analyzed {analyzed_counts[category]} "
                     f"→ focus {focus_counts.get(category, 0)} "
+                    f"→ substantive {substantive_counts.get(category, 0)} "
                     f"→ score {threshold_counts.get(category, 0)}"
                 )
             self.console.print("")
@@ -708,6 +734,8 @@ class HorizonOrchestrator:
             items=balanced_digest.items,
             focus_relevance_count=len(focus_items),
             focus_relevance_removed=focus_relevance_removed,
+            substantive_count=len(substantive_items),
+            substantive_removed=substantive_removed,
             threshold_count=len(threshold_items),
             topic_dedup_count=len(deduped_items),
             topic_dedup_removed=topic_dedup_removed,

@@ -103,6 +103,7 @@ def test_analyze_item_accepts_valid_result():
     result = {
         "score": 8.5,
         "focus_relevant": True,
+        "substantive": True,
         "reason": "Relevant",
         "summary": "A useful update",
         "tags": ["ai", "research"],
@@ -119,6 +120,7 @@ def test_analyze_item_accepts_valid_result():
 
     assert item.ai_score == 8.5
     assert item.ai_focus_relevant is True
+    assert item.ai_substantive is True
     assert item.ai_reason == "Relevant"
     assert item.ai_summary == "A useful update"
     assert item.ai_tags == ["ai", "research"]
@@ -128,6 +130,7 @@ def test_analyze_item_includes_reader_focus_and_source_category():
     result = {
         "score": 8.0,
         "focus_relevant": True,
+        "substantive": True,
         "reason": "Directly relevant",
         "summary": "A useful coding-agent update",
         "tags": ["ai-coding", "agents"],
@@ -154,11 +157,14 @@ def test_analyze_item_includes_reader_focus_and_source_category():
     assert "must score 5 or lower" in captured["system"]
     assert "actionable tool, workflow, or engineering technique" in captured["system"]
     assert '"focus_relevant"' in captured["user"]
+    assert '"substantive"' in captured["user"]
+    assert "demos or vibe experiments" in captured["system"]
 
 
 def test_topic_dedup_prompt_collapses_overlapping_announcement_families():
     assert "same underlying feature rollout or announcement family" in TOPIC_DEDUP_SYSTEM
     assert "key facts substantially overlap" in TOPIC_DEDUP_SYSTEM
+    assert "quote, translate, or restate that same technique" in TOPIC_DEDUP_SYSTEM
 
 
 @pytest.mark.parametrize(
@@ -180,6 +186,7 @@ def test_analyze_item_malformed_json_result_uses_fallback(result):
     asyncio.run(ContentAnalyzer(SimpleNamespace(complete=complete))._analyze_item(item))
 
     assert item.ai_score == 0.0
+    assert item.ai_substantive is False
     assert item.ai_reason == "Analysis response parse failed"
     assert item.ai_summary == item.title
     assert item.ai_tags == []

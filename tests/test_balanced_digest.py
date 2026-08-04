@@ -155,6 +155,7 @@ def test_filter_items_requires_reader_focus_relevance() -> None:
     )
     relevant = make_item("relevant", 5.0, "ai-coding")
     relevant.ai_focus_relevant = True
+    relevant.ai_substantive = True
     unrelated = make_item("unrelated", 10.0, "ai-news")
     unrelated.ai_focus_relevant = False
     unknown = make_item("unknown", 10.0, "ai-news")
@@ -170,6 +171,77 @@ def test_filter_items_requires_reader_focus_relevance() -> None:
     assert [item.id for item in result.items] == ["relevant"]
     assert result.focus_relevance_count == 1
     assert result.focus_relevance_removed == 2
+
+
+def test_filter_items_rejects_non_substantive_vibe_demo() -> None:
+    filtering = FilteringConfig(
+        ai_score_threshold=5.0,
+        focus_topics=["AI coding tools"],
+    )
+    useful = make_item("useful", 5.0, "ai-coding")
+    useful.ai_focus_relevant = True
+    useful.ai_substantive = True
+    demo = make_item("tolkien-to-3d-vibe-test", 10.0, "ai-coding")
+    demo.title = "Karpathy turns Tolkien into a 3D scene as a vibe test"
+    demo.ai_focus_relevant = True
+    demo.ai_substantive = False
+
+    result = asyncio.run(
+        make_orchestrator(filtering).filter_items(
+            [demo, useful],
+            topic_dedup=False,
+            log=False,
+        )
+    )
+
+    assert [item.id for item in result.items] == ["useful"]
+    assert result.substantive_count == 1
+    assert result.substantive_removed == 1
+
+
+def test_topic_dedup_uses_source_url_and_excerpt_for_reposted_technique(
+    monkeypatch,
+) -> None:
+    filtering = FilteringConfig(ai_score_threshold=5.0)
+    orchestrator = make_orchestrator(filtering)
+    orchestrator.config.ai = SimpleNamespace()
+    original = make_item("llm-open-source-tools", 8.0, "engineering-practice")
+    original.title = "LLMs may make open-source developer tools more viable"
+    original.content = (
+        "Developers can keep local changes and use a nightly cron job to rebase "
+        "them on upstream with an AI coding agent."
+    )
+    original.metadata["feed_name"] = "Simon Willison"
+    original.ai_summary = "Use an agent in cron to maintain local tool forks."
+    repost = make_item("crawshaw-cron", 7.0, "engineering-practice")
+    repost.title = "David Crawshaw uses cron to let AI maintain software branches"
+    repost.content = (
+        "A reusable prompt fetches upstream, rebases local modifications, runs "
+        "tests, and replaces the current version every night."
+    )
+    repost.metadata["feed_name"] = "Latent Space"
+    repost.ai_summary = "A nightly coding agent rebases and tests a local fork."
+    captured: dict[str, str] = {}
+
+    async def complete(**kwargs):  # type: ignore[no-untyped-def]
+        captured.update(kwargs)
+        return '{"duplicates": [[0, 1]]}'
+
+    monkeypatch.setattr(
+        "src.orchestrator.create_ai_client",
+        lambda config: SimpleNamespace(complete=complete),
+    )
+
+    result = asyncio.run(
+        orchestrator.merge_topic_duplicates([original, repost], log=False)
+    )
+
+    assert [item.id for item in result] == ["llm-open-source-tools"]
+    assert "Source: rss:Simon Willison" in captured["user"]
+    assert "URL: https://example.com/llm-open-source-tools" in captured["user"]
+    assert "Excerpt: Developers can keep local changes" in captured["user"]
+    assert "Source: rss:Latent Space" in captured["user"]
+    assert "Excerpt: A reusable prompt fetches upstream" in captured["user"]
 
 
 def test_max_items_works_without_category_groups() -> None:
