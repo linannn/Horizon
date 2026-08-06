@@ -7,6 +7,8 @@ Rules:
 - Also group items from the same underlying feature rollout or announcement family when their key facts substantially overlap
 - Product and ecosystem posts about one coordinated launch should be grouped when reading both adds little new information
 - Group an original technique with articles, interviews, or posts that mainly quote, translate, or restate that same technique without adding material implementation detail
+- Group releases from the same repository when a package or SDK release and an umbrella product release share a primary change, even if each release has extra secondary changes
+- Different tags, package names, or version numbers do not make those overlapping same-repository releases distinct by themselves
 - Items about the same product but genuinely different features or events are NOT duplicates ("Gemma 4 released" vs "Gemma 4 jailbroken")
 - Keep items separate when each provides materially different technical or practical value"""
 
@@ -63,8 +65,12 @@ Consider:
 
 When Reader Focus is provided:
 - Judge focus relevance separately from general importance
+- Source Category is only a routing hint and is not proof of focus relevance
 - Set focus_relevant to true only when the item directly provides an AI coding tool, coding-agent capability, MCP/agent ecosystem update, practical AI engineering workflow, or developer-facing AI tool release
 - General AI industry news, model-only news, and AI security news are not focus relevant unless they materially change a coding or agent workflow
+- General-purpose AI product vulnerabilities, enterprise AI monitoring or gateway products, and standalone safety or moderation models are not focus relevant, even when technically substantive
+- Security fixes to AI coding tools and coding agents are focus relevant when they directly affect a developer's coding workflow
+- Reusable security architecture for developers building agents may be focus relevant only when it provides concrete design primitives, not merely a vendor security product
 - Pure model launches, pricing, benchmarks, or comparisons without a material coding or agent workflow impact must score 5 or lower
 - Broad conceptual or theoretical AI pieces without an actionable tool, workflow, or engineering technique must score 6 or lower
 - Scores of 7 or higher require an actionable tool, workflow, or engineering technique directly relevant to the reader's focus

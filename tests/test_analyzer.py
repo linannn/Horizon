@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import src.ai.analyzer as analyzer_module
 from src.ai.analyzer import ContentAnalyzer
-from src.ai.prompts import TOPIC_DEDUP_SYSTEM
+from src.ai.prompts import CONTENT_ANALYSIS_SYSTEM, TOPIC_DEDUP_SYSTEM
 from src.models import ContentItem, SourceType
 
 
@@ -165,6 +165,15 @@ def test_topic_dedup_prompt_collapses_overlapping_announcement_families():
     assert "same underlying feature rollout or announcement family" in TOPIC_DEDUP_SYSTEM
     assert "key facts substantially overlap" in TOPIC_DEDUP_SYSTEM
     assert "quote, translate, or restate that same technique" in TOPIC_DEDUP_SYSTEM
+    assert "same repository" in TOPIC_DEDUP_SYSTEM
+    assert "package or SDK release" in TOPIC_DEDUP_SYSTEM
+
+
+def test_analysis_prompt_excludes_adjacent_ai_security_from_reader_focus():
+    assert "General-purpose AI product vulnerabilities" in CONTENT_ANALYSIS_SYSTEM
+    assert "enterprise AI monitoring or gateway products" in CONTENT_ANALYSIS_SYSTEM
+    assert "Security fixes to AI coding tools" in CONTENT_ANALYSIS_SYSTEM
+    assert "concrete design primitives" in CONTENT_ANALYSIS_SYSTEM
 
 
 @pytest.mark.parametrize(
