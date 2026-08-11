@@ -41,6 +41,43 @@
     });
   }
 
+  function articleLanguage() {
+    var path = window.location.pathname.replace(/\/$/, '');
+    if (/-zh(?:\.html)?$/.test(path)) return 'zh';
+    if (/-en(?:\.html)?$/.test(path)) return 'en';
+    return null;
+  }
+
+  function replaceLinkedSentence(container, parts) {
+    if (!container) return;
+    var links = Array.prototype.slice.call(container.querySelectorAll('a'));
+    if (links.length < parts.length - 1) return;
+    var nodes = [];
+    parts.forEach(function (text, index) {
+      if (text) nodes.push(document.createTextNode(text));
+      if (index < parts.length - 1) nodes.push(links[index].cloneNode(true));
+    });
+    container.replaceChildren.apply(container, nodes);
+  }
+
+  function localizeArticleChrome(lang) {
+    document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en-US';
+    if (lang !== 'zh') return;
+
+    var skipLink = document.querySelector('a[href="#content"]');
+    if (skipLink) skipLink.textContent = '跳至正文';
+    var repositoryButton = document.querySelector('.page-header .btn');
+    if (repositoryButton) repositoryButton.textContent = '在 GitHub 上查看';
+    replaceLinkedSentence(
+      document.querySelector('.site-footer-owner'),
+      ['', ' 由 ', ' 维护。']
+    );
+    replaceLinkedSentence(
+      document.querySelector('.site-footer-credits'),
+      ['本页面由 ', ' 生成。']
+    );
+  }
+
   /** Set up EN/中文 language toggle as a page-level control */
   function setupLanguageToggle() {
     // Create toggle buttons
@@ -57,6 +94,8 @@
 
     toggle.appendChild(btnEn);
     toggle.appendChild(btnZh);
+    toggle.setAttribute('role', 'group');
+    toggle.setAttribute('aria-label', 'Language / 语言');
 
     // Insert at top of body
     document.body.insertBefore(toggle, document.body.firstChild);
@@ -64,15 +103,20 @@
     // Read saved preference, default to zh
     var saved = null;
     try { saved = localStorage.getItem('horizon-lang'); } catch (e) { /* noop */ }
-    var currentLang = saved === 'en' ? 'en' : 'zh';
+    var pageLang = articleLanguage();
+    var currentLang = pageLang || (saved === 'en' ? 'en' : 'zh');
 
     function updateButtons(lang) {
       if (lang === 'en') {
         btnEn.classList.add('active');
         btnZh.classList.remove('active');
+        btnEn.setAttribute('aria-pressed', 'true');
+        btnZh.setAttribute('aria-pressed', 'false');
       } else {
         btnZh.classList.add('active');
         btnEn.classList.remove('active');
+        btnEn.setAttribute('aria-pressed', 'false');
+        btnZh.setAttribute('aria-pressed', 'true');
       }
     }
 
@@ -119,6 +163,7 @@
 
     // Initialize
     updateButtons(currentLang);
+    if (pageLang) localizeArticleChrome(pageLang);
     if (zhSection && enSection) {
       showSection(currentLang);
     }

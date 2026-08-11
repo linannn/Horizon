@@ -5,6 +5,11 @@
 <link rel="alternate" type="application/atom+xml" title="Horizon Daily RSS (ZH)" href="{{ '/feed-zh.xml' | relative_url }}">
 <link rel="alternate" type="application/atom+xml" title="Horizon Daily RSS (EN)" href="{{ '/feed-en.xml' | relative_url }}">
 <link rel="stylesheet" href="{{ '/assets/css/horizon.css' | relative_url }}">
+{% if page.lang == "zh" %}
+<script>document.documentElement.lang = 'zh-CN';</script>
+{% elsif page.lang == "en" %}
+<script>document.documentElement.lang = 'en-US';</script>
+{% endif %}
 <style>
 .rss-icon{opacity:.6;color:inherit;margin-left:12px;vertical-align:middle;text-decoration:none;transition:all .2s}
 .rss-icon:hover{opacity:1;color:#f26522}
