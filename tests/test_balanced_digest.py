@@ -15,7 +15,7 @@ from src.models import (
     SourceType,
     SourcesConfig,
 )
-from src.orchestrator import HorizonOrchestrator
+from src.orchestrator import HorizonOrchestrator, _build_post_front_matter
 
 
 def make_item(item_id: str, score: float, category: str | None) -> ContentItem:
@@ -199,6 +199,66 @@ def test_filter_items_rejects_non_substantive_vibe_demo() -> None:
     assert result.substantive_removed == 1
 
 
+def test_filter_items_adds_bounded_lower_priority_focus_updates() -> None:
+    filtering = FilteringConfig(
+        ai_score_threshold=5.0,
+        watch_score_threshold=4.0,
+        max_watch_items=3,
+        focus_topics=["AI coding tools"],
+    )
+    core = make_item("core", 7.0, "ai-coding")
+    core.ai_focus_relevant = True
+    core.ai_substantive = True
+    watch_high = make_item("watch-high", 4.8, "ai-coding")
+    watch_high.ai_focus_relevant = True
+    watch_high.ai_substantive = False
+    watch_middle = make_item("watch-middle", 4.5, "engineering-practice")
+    watch_middle.ai_focus_relevant = True
+    watch_middle.ai_substantive = True
+    watch_low = make_item("watch-low", 4.0, "agent-ecosystem")
+    watch_low.ai_focus_relevant = True
+    watch_low.ai_substantive = False
+    watch_overflow = make_item("watch-overflow", 4.0, "ai-coding")
+    watch_overflow.ai_focus_relevant = True
+    watch_overflow.ai_substantive = False
+    below_watch = make_item("below-watch", 3.9, "ai-coding")
+    below_watch.ai_focus_relevant = True
+    below_watch.ai_substantive = False
+    inconsistent_demo = make_item("inconsistent-demo", 10.0, "ai-coding")
+    inconsistent_demo.ai_focus_relevant = True
+    inconsistent_demo.ai_substantive = False
+    unrelated = make_item("unrelated", 4.9, "ai-news")
+    unrelated.ai_focus_relevant = False
+    unrelated.ai_substantive = True
+
+    result = asyncio.run(
+        make_orchestrator(filtering).filter_items(
+            [
+                unrelated,
+                watch_low,
+                watch_overflow,
+                core,
+                below_watch,
+                watch_middle,
+                inconsistent_demo,
+                watch_high,
+            ],
+            topic_dedup=False,
+            log=False,
+        )
+    )
+
+    assert [item.id for item in result.items] == [
+        "core",
+        "watch-high",
+        "watch-middle",
+        "watch-low",
+    ]
+    assert result.threshold_count == 1
+    assert result.watch_eligible_count == 4
+    assert result.watch_selected_count == 3
+
+
 def test_topic_dedup_uses_source_url_and_excerpt_for_reposted_technique(
     monkeypatch,
 ) -> None:
@@ -244,6 +304,61 @@ def test_topic_dedup_uses_source_url_and_excerpt_for_reposted_technique(
     assert "Excerpt: A reusable prompt fetches upstream" in captured["user"]
 
 
+def test_topic_dedup_merges_same_repo_semver_prereleases_before_ai(monkeypatch) -> None:
+    filtering = FilteringConfig(ai_score_threshold=5.0)
+    orchestrator = make_orchestrator(filtering)
+    orchestrator.config.ai = SimpleNamespace()
+    preview = make_item("preview", 8.0, "release-monitoring")
+    preview.source_type = SourceType.GITHUB
+    preview.content = "Preview fixes retry hangs."
+    preview.metadata.update(
+        {"repo": "google-gemini/gemini-cli", "tag": "v0.55.0-preview.1"}
+    )
+    nightly = make_item("nightly", 7.0, "release-monitoring")
+    nightly.source_type = SourceType.GITHUB
+    nightly.content = "Nightly adds PR generator infrastructure."
+    nightly.metadata.update(
+        {
+            "repo": "google-gemini/gemini-cli",
+            "tag": "v0.55.0-nightly.20260806.g761f604c1",
+        }
+    )
+    next_version = make_item("next-version", 6.0, "release-monitoring")
+    next_version.source_type = SourceType.GITHUB
+    next_version.metadata.update(
+        {"repo": "google-gemini/gemini-cli", "tag": "v0.56.0-preview.1"}
+    )
+
+    async def complete(**kwargs):  # type: ignore[no-untyped-def]
+        return '{"duplicates": []}'
+
+    monkeypatch.setattr(
+        "src.orchestrator.create_ai_client",
+        lambda config: SimpleNamespace(complete=complete),
+    )
+
+    result = asyncio.run(
+        orchestrator.merge_topic_duplicates([preview, nightly, next_version], log=False)
+    )
+
+    assert [item.id for item in result] == ["preview", "next-version"]
+    assert result[0].metadata["merged_release_tags"] == [
+        "v0.55.0-preview.1",
+        "v0.55.0-nightly.20260806.g761f604c1",
+    ]
+    assert "Nightly adds PR generator infrastructure." in (result[0].content or "")
+    assert preview.content == "Preview fixes retry hangs."
+
+
+def test_build_post_front_matter_localizes_chinese_page_metadata() -> None:
+    result = _build_post_front_matter("2026-08-07", "zh")
+
+    assert 'title: "Horizon 每日速递：2026-08-07"' in result
+    assert 'description: "AI 精选的技术与研究日报"' in result
+    assert "lang: zh" in result
+    assert "locale: zh-CN" in result
+
+
 def test_max_items_works_without_category_groups() -> None:
     filtering = FilteringConfig(max_items=1)
     items = [make_item("lower", 7.0, None), make_item("higher", 9.0, None)]
@@ -275,6 +390,14 @@ def test_duplicate_category_warns_and_first_group_wins() -> None:
     "kwargs",
     [
         {"max_items": 0},
+        {"watch_score_threshold": 4.0},
+        {"max_watch_items": 4},
+        {
+            "ai_score_threshold": 5.0,
+            "watch_score_threshold": 5.0,
+            "max_watch_items": 4,
+        },
+        {"watch_score_threshold": 4.0, "max_watch_items": 0},
         {"default_group_limit": 0},
         {"category_groups": {"ai": {"limit": 0, "categories": ["ai"]}}},
         {"category_groups": {"ai": {"limit": 1, "categories": []}}},

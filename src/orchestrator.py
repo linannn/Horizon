@@ -1,6 +1,7 @@
 """Main orchestrator coordinating the entire workflow."""
 
 import asyncio
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -9,7 +10,7 @@ from urllib.parse import unquote_plus, urlsplit
 import httpx
 from rich.console import Console
 
-from .models import Config, ContentItem
+from .models import Config, ContentItem, SourceType
 from .storage.manager import StorageManager, safe_output_path
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
@@ -45,6 +46,43 @@ _TRACKING_QUERY_PARAMETERS = {
     "twclid",
     "vero_id",
 }
+_SEMVER_IN_RELEASE_TAG = re.compile(r"(?<!\d)(\d+\.\d+\.\d+)(?!\d)")
+
+
+def _release_train_key(item: ContentItem) -> Optional[tuple[str, str]]:
+    """Identify releases from the same repository and semantic version line."""
+    if item.source_type != SourceType.GITHUB:
+        return None
+    repo = item.metadata.get("repo")
+    tag = item.metadata.get("tag")
+    if not isinstance(repo, str) or not isinstance(tag, str):
+        return None
+    version_match = _SEMVER_IN_RELEASE_TAG.search(tag)
+    if version_match is None:
+        return None
+    return repo.casefold(), version_match.group(1)
+
+
+def _build_post_front_matter(date: str, language: str) -> str:
+    """Build localized Jekyll metadata for a generated daily post."""
+    if language == "zh":
+        title = f"Horizon 每日速递：{date}"
+        description = "AI 精选的技术与研究日报"
+        locale = "zh-CN"
+    else:
+        title = f"Horizon Daily: {date}"
+        description = "AI-curated daily digest of tech and research news"
+        locale = "en-US"
+    return (
+        "---\n"
+        "layout: default\n"
+        f'title: "{title}"\n'
+        f'description: "{description}"\n'
+        f"date: {date}\n"
+        f"lang: {language}\n"
+        f"locale: {locale}\n"
+        "---\n\n"
+    )
 
 
 def _deduplication_url_key(url: str) -> tuple[str, str, str, str, Optional[int], str, str]:
@@ -98,6 +136,8 @@ class FilteringPipelineResult:
     substantive_count: int
     substantive_removed: int
     threshold_count: int
+    watch_eligible_count: int
+    watch_selected_count: int
     topic_dedup_count: int
     topic_dedup_removed: int
     balanced_digest: BalancedDigestResult
@@ -282,14 +322,7 @@ class HorizonOrchestrator:
                     dest_path = safe_output_path(posts_dir, post_filename)
 
                     # Add Jekyll front matter
-                    front_matter = (
-                        "---\n"
-                        "layout: default\n"
-                        f"title: \"Horizon Summary: {today} ({lang.upper()})\"\n"
-                        f"date: {today}\n"
-                        f"lang: {lang}\n"
-                        "---\n\n"
-                    )
+                    front_matter = _build_post_front_matter(today, lang)
 
                     # Strip leading H1 header to avoid duplication with Jekyll title
                     summary_content = summary
@@ -577,15 +610,16 @@ class HorizonOrchestrator:
 
         Falls back to returning items unchanged if the AI call fails.
         """
-        if len(items) <= 1:
-            return items
+        release_deduped_items = self._merge_release_train_duplicates(items, log=log)
+        if len(release_deduped_items) <= 1:
+            return release_deduped_items
 
         from .ai.prompts import TOPIC_DEDUP_SYSTEM, TOPIC_DEDUP_USER
         from .ai.utils import parse_json_response
 
         # Build the item list for the prompt
         lines = []
-        for i, item in enumerate(items):
+        for i, item in enumerate(release_deduped_items):
             tags = ", ".join(item.ai_tags) if item.ai_tags else "—"
             summary = item.ai_summary or "—"
             content = (item.content or "").split("--- Top Comments ---", 1)[0]
@@ -611,16 +645,16 @@ class HorizonOrchestrator:
             if result is None:
                 if log:
                     self.console.print("[yellow]  dedup: could not parse AI response, skipping[/yellow]")
-                return items
+                return release_deduped_items
 
             duplicate_groups = result.get("duplicates", [])
         except Exception as e:
             if log:
                 self.console.print(f"[yellow]  dedup: AI call failed ({e}), skipping[/yellow]")
-            return items
+            return release_deduped_items
 
         if not duplicate_groups:
-            return items
+            return release_deduped_items
 
         # Build a set of indices to drop (all non-primary duplicates)
         drop_indices: set[int] = set()
@@ -628,15 +662,19 @@ class HorizonOrchestrator:
             if not isinstance(group, list) or len(group) < 2:
                 continue
             primary_idx = group[0]
-            if primary_idx < 0 or primary_idx >= len(items):
+            if primary_idx < 0 or primary_idx >= len(release_deduped_items):
                 continue
-            primary = items[primary_idx]
+            primary = release_deduped_items[primary_idx]
             for dup_idx in group[1:]:
-                if not isinstance(dup_idx, int) or dup_idx < 0 or dup_idx >= len(items):
+                if (
+                    not isinstance(dup_idx, int)
+                    or dup_idx < 0
+                    or dup_idx >= len(release_deduped_items)
+                ):
                     continue
                 if dup_idx == primary_idx:
                     continue
-                dup = items[dup_idx]
+                dup = release_deduped_items[dup_idx]
                 # Merge comments/content from the duplicate into the primary
                 if dup.content:
                     if not primary.content or dup.content not in primary.content:
@@ -649,7 +687,55 @@ class HorizonOrchestrator:
                     )
                 drop_indices.add(dup_idx)
 
-        return [item for i, item in enumerate(items) if i not in drop_indices]
+        return [
+            item
+            for i, item in enumerate(release_deduped_items)
+            if i not in drop_indices
+        ]
+
+    def _merge_release_train_duplicates(
+        self,
+        items: List[ContentItem],
+        *,
+        log: bool,
+    ) -> List[ContentItem]:
+        """Deterministically merge prerelease tags from one release train."""
+        merged_items: List[ContentItem] = []
+        primary_indices: Dict[tuple[str, str], int] = {}
+        for item in items:
+            key = _release_train_key(item)
+            if key is None or key not in primary_indices:
+                if key is not None:
+                    primary_indices[key] = len(merged_items)
+                merged_items.append(item)
+                continue
+
+            primary_index = primary_indices[key]
+            primary = merged_items[primary_index]
+            primary_tag = str(primary.metadata.get("tag", ""))
+            duplicate_tag = str(item.metadata.get("tag", ""))
+            release_tags = list(primary.metadata.get("merged_release_tags", [primary_tag]))
+            if duplicate_tag and duplicate_tag not in release_tags:
+                release_tags.append(duplicate_tag)
+            merged_content = primary.content or ""
+            if item.content and item.content not in merged_content:
+                merged_content += f"\n\n--- From GitHub release {duplicate_tag} ---\n{item.content}"
+            merged_items[primary_index] = primary.model_copy(
+                update={
+                    "content": merged_content,
+                    "metadata": {
+                        **primary.metadata,
+                        "merged_release_tags": release_tags,
+                    },
+                },
+                deep=True,
+            )
+            if log:
+                self.console.print(
+                    f"   [dim]dedup: keep release {primary_tag}; "
+                    f"merge {duplicate_tag} from {key[0]}[/dim]"
+                )
+        return merged_items
 
     async def filter_items(
         self,
@@ -688,6 +774,29 @@ class HorizonOrchestrator:
         ]
         threshold_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
 
+        watch_score_threshold = self.config.filtering.watch_score_threshold
+        max_watch_items = self.config.filtering.max_watch_items or 0
+        watch_eligible_items: List[ContentItem] = []
+        if (
+            focus_required
+            and watch_score_threshold is not None
+            and watch_score_threshold < effective_threshold
+            and max_watch_items > 0
+        ):
+            watch_eligible_items = [
+                item
+                for item in focus_items
+                if item.ai_score is not None
+                and watch_score_threshold <= item.ai_score < effective_threshold
+            ]
+            watch_eligible_items.sort(
+                key=lambda item: item.ai_score or 0,
+                reverse=True,
+            )
+
+        candidate_items = [*threshold_items, *watch_eligible_items]
+        candidate_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
+
         if log:
             if focus_required:
                 self.console.print(
@@ -701,23 +810,31 @@ class HorizonOrchestrator:
             self.console.print(
                 f"⭐️ {len(threshold_items)} items scored ≥ {effective_threshold}\n"
             )
+            if watch_score_threshold is not None and max_watch_items > 0:
+                self.console.print(
+                    f"👀 {len(watch_eligible_items)} lower-priority focus items eligible "
+                    f"for More Updates (score ≥ {watch_score_threshold}; "
+                    f"max {max_watch_items})\n"
+                )
             analyzed_counts = self._category_counts(items)
             focus_counts = self._category_counts(focus_items)
             substantive_counts = self._category_counts(substantive_items)
             threshold_counts = self._category_counts(threshold_items)
+            watch_counts = self._category_counts(watch_eligible_items)
             for category in sorted(analyzed_counts):
                 self.console.print(
                     f"      • {category}: analyzed {analyzed_counts[category]} "
                     f"→ focus {focus_counts.get(category, 0)} "
                     f"→ substantive {substantive_counts.get(category, 0)} "
-                    f"→ score {threshold_counts.get(category, 0)}"
+                    f"→ score {threshold_counts.get(category, 0)} "
+                    f"→ watch {watch_counts.get(category, 0)}"
                 )
             self.console.print("")
 
-        deduped_items = threshold_items
+        deduped_items = candidate_items
         if topic_dedup and deduped_items:
             deduped_items = await self.merge_topic_duplicates(deduped_items, log=log)
-        topic_dedup_removed = len(threshold_items) - len(deduped_items)
+        topic_dedup_removed = len(candidate_items) - len(deduped_items)
 
         if log and topic_dedup_removed:
             self.console.print(
@@ -725,11 +842,35 @@ class HorizonOrchestrator:
                 f"→ {len(deduped_items)} unique items\n"
             )
 
+        watch_selected = 0
+        capped_items: List[ContentItem] = []
+        for item in deduped_items:
+            is_primary = (
+                item.ai_score is not None
+                and item.ai_score >= effective_threshold
+                and (not focus_required or item.ai_substantive is True)
+            )
+            if is_primary:
+                capped_items.append(item)
+            elif watch_selected < max_watch_items:
+                capped_items.append(item)
+                watch_selected += 1
+
         balanced_digest = (
-            self.apply_balanced_digest(deduped_items, log=log)
+            self.apply_balanced_digest(capped_items, log=log)
             if apply_balance
-            else BalancedDigestResult(items=deduped_items)
+            else BalancedDigestResult(items=capped_items)
         )
+        final_watch_count = sum(
+            1
+            for item in balanced_digest.items
+            if item.ai_score is not None and item.ai_score < effective_threshold
+        )
+        if log and watch_score_threshold is not None and max_watch_items > 0:
+            self.console.print(
+                f"👀 Added {final_watch_count} lower-priority focus items "
+                f"to More Updates (max {max_watch_items})\n"
+            )
         return FilteringPipelineResult(
             items=balanced_digest.items,
             focus_relevance_count=len(focus_items),
@@ -737,6 +878,8 @@ class HorizonOrchestrator:
             substantive_count=len(substantive_items),
             substantive_removed=substantive_removed,
             threshold_count=len(threshold_items),
+            watch_eligible_count=len(watch_eligible_items),
+            watch_selected_count=final_watch_count,
             topic_dedup_count=len(deduped_items),
             topic_dedup_removed=topic_dedup_removed,
             balanced_digest=balanced_digest,

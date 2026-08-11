@@ -51,11 +51,12 @@ LABELS = {
         "source": "Source",
         "background": "Background",
         "discussion": "Discussion",
-        "references": "References",
+        "references": "Sources",
         "tags": "Tags",
         "tier": "Priority",
         "core": "Core",
         "watch": "Worth Watching",
+        "more_updates": "More Updates",
         "selected_items": "From {total} items, {selected} important content pieces were selected",
         "empty_analyzed": "Analyzed {total} items, but none met the importance threshold.",
         "empty_body": (
@@ -74,11 +75,12 @@ LABELS = {
         "source": "来源",
         "background": "背景",
         "discussion": "社区讨论",
-        "references": "参考链接",
+        "references": "来源依据",
         "tags": "标签",
         "tier": "级别",
         "core": "核心必看",
         "watch": "值得关注",
+        "more_updates": "更多动态",
         "selected_items": "从 {total} 条内容中筛选出 {selected} 条重要资讯。",
         "empty_analyzed": "已分析 {total} 条内容，但没有达到重要性阈值的条目。",
         "empty_body": (
@@ -143,7 +145,27 @@ class DailySummarizer:
             toc_entries.append(f"{i + 1}. [{t}](#item-{i + 1}) \u2b50\ufe0f {score}/10")
         toc = "\n".join(toc_entries) + "\n\n---\n\n"
 
-        parts = [self._format_item(item, labels, language, i + 1) for i, item in enumerate(items)]
+        indexed_items = list(enumerate(items, start=1))
+        core_items = [
+            (index, item)
+            for index, item in indexed_items
+            if (item.ai_score or 0) >= self.core_score_threshold
+        ]
+        watch_items = [
+            (index, item)
+            for index, item in indexed_items
+            if (item.ai_score or 0) < self.core_score_threshold
+        ]
+        parts = [
+            self._format_item(item, labels, language, index)
+            for index, item in core_items
+        ]
+        if watch_items:
+            parts.append(f"## {labels['more_updates']}\n\n")
+            parts.extend(
+                self._format_compact_item(item, labels, language, index)
+                for index, item in watch_items
+            )
 
         return header + toc + "".join(parts)
 
@@ -200,8 +222,7 @@ class DailySummarizer:
         """Format a single ContentItem into Markdown."""
         _title = item.metadata.get(f"title_{language}") or item.title
         title = _escape_markdown(_title)
-        raw_url = str(item.url)
-        url = _safe_url(raw_url)
+        url = _safe_url(item.url)
         score = item.ai_score or "?"
         meta = item.metadata
 
@@ -228,31 +249,7 @@ class DailySummarizer:
             background = _pangu(background)
             discussion = _pangu(discussion)
 
-        # Source line with parts joined by " · ", link appended at end
-        source_type = item.source_type.value
-        source_parts = [_escape_markdown(source_type)]
-        if meta.get("subreddit"):
-            source_parts.append(_escape_markdown(f"r/{meta['subreddit']}"))
-        if meta.get("feed_name"):
-            source_parts.append(_escape_markdown(meta["feed_name"]))
-        else:
-            source_parts.append(_escape_markdown(item.author or "unknown"))
-        if item.published_at:
-            if language == "zh":
-                source_parts.append(
-                    f"{item.published_at.month}月{item.published_at.day}日 "
-                    f"{item.published_at:%H:%M}"
-                )
-            else:
-                day = item.published_at.strftime("%d").lstrip("0")
-                source_parts.append(item.published_at.strftime(f"%b {day}, %H:%M"))
-        source_line = " \u00b7 ".join(source_parts)  # ·
-
-        discussion_url = meta.get("discussion_url")
-        if discussion_url:
-            safe_discussion_url = _safe_url(discussion_url)
-            if safe_discussion_url and str(discussion_url) != raw_url:
-                source_line += f' · [{labels["discussion"]}]({safe_discussion_url})'
+        source_line = self._format_source_line(item, labels, language)
 
         title_link = f"[{title}]({url})" if url else title
 
@@ -301,6 +298,63 @@ class DailySummarizer:
         lines.append("---")
 
         return "\n".join(lines) + "\n\n"
+
+    def _format_compact_item(
+        self,
+        item: ContentItem,
+        labels: dict,
+        language: str,
+        index: int,
+    ) -> str:
+        """Render a lower-priority item without repeating enrichment and references."""
+        title = _escape_markdown(item.metadata.get(f"title_{language}") or item.title)
+        summary = _escape_markdown(
+            item.metadata.get(f"whats_new_{language}") or item.ai_summary or ""
+        )
+        if language == "zh":
+            title = _pangu(title)
+            summary = _pangu(summary)
+        url = _safe_url(item.url)
+        title_link = f"[{title}]({url})" if url else title
+        score = item.ai_score or "?"
+        lines = [
+            f'<a id="item-{index}"></a>',
+            f"### {title_link} \u2b50\ufe0f {score}/10",
+        ]
+        if summary:
+            lines.extend(["", summary])
+        lines.extend(["", self._format_source_line(item, labels, language), ""])
+        return "\n".join(lines) + "\n"
+
+    @staticmethod
+    def _format_source_line(item: ContentItem, labels: dict, language: str) -> str:
+        """Format source metadata and an optional distinct discussion link."""
+        meta = item.metadata
+        source_type = item.source_type.value
+        source_parts = [_escape_markdown(source_type)]
+        if meta.get("subreddit"):
+            source_parts.append(_escape_markdown(f"r/{meta['subreddit']}"))
+        if meta.get("feed_name"):
+            source_parts.append(_escape_markdown(meta["feed_name"]))
+        else:
+            source_parts.append(_escape_markdown(item.author or "unknown"))
+        if item.published_at:
+            if language == "zh":
+                source_parts.append(
+                    f"{item.published_at.month}月{item.published_at.day}日 "
+                    f"{item.published_at:%H:%M}"
+                )
+            else:
+                day = item.published_at.strftime("%d").lstrip("0")
+                source_parts.append(item.published_at.strftime(f"%b {day}, %H:%M"))
+        source_line = " \u00b7 ".join(source_parts)  # ·
+
+        discussion_url = meta.get("discussion_url")
+        if discussion_url:
+            safe_discussion_url = _safe_url(discussion_url)
+            if safe_discussion_url and str(discussion_url) != str(item.url):
+                source_line += f' · [{labels["discussion"]}]({safe_discussion_url})'
+        return source_line
 
     def _generate_empty_summary(self, date: str, total_fetched: int, labels: dict) -> str:
         """Generate summary when no high-scoring items were found."""

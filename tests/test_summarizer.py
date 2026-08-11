@@ -124,11 +124,13 @@ def test_generate_summary_zh_uses_localized_selection_header_and_numeric_date():
     assert "Apr 25, 08:00" not in result
 
 
-def test_generate_summary_labels_core_and_watch_items():
+def test_generate_summary_expands_core_and_compacts_watch_items():
     summarizer = DailySummarizer(core_score_threshold=7.0)
     core = _make_item(1)
     watch = _make_item(2)
     watch.ai_score = 5.0
+    watch.metadata["whats_new_zh"] = "这是值得关注条目的简短更新。"
+    watch.metadata["background_zh"] = "这段背景不应出现在紧凑列表里。"
 
     result = _run_async(
         summarizer.generate_summary(
@@ -140,7 +142,12 @@ def test_generate_summary_labels_core_and_watch_items():
     )
 
     assert "**级别**: 核心必看" in result
-    assert "**级别**: 值得关注" in result
+    assert "## 更多动态" in result
+    assert "### [Important Item 2](https://example.com/items/2)" in result
+    assert "这是值得关注条目的简短更新。" in result
+    assert "rss · tester · 4月25日 08:00" in result
+    assert "这段背景不应出现在紧凑列表里。" not in result
+    assert "**级别**: 值得关注" not in result
 
 
 def test_generate_empty_summary_zh_uses_localized_analyzed_line():

@@ -125,9 +125,27 @@ class ContentEnricher:
             if result is None:
                 return []
             queries = result.get("queries", [])
-            return queries[:3]
+            if not isinstance(queries, list):
+                return []
+            return [query for query in queries if isinstance(query, str)][:3]
         except Exception:
             return []
+
+    @staticmethod
+    def _build_search_queries(item: ContentItem, concepts: List[str]) -> List[str]:
+        """Search the claim first, then add distinct background concepts."""
+        queries = []
+        seen = set()
+        for candidate in [item.title, *concepts]:
+            if not isinstance(candidate, str):
+                continue
+            query = " ".join(candidate.split()).strip()
+            key = query.casefold()
+            if not query or key in seen:
+                continue
+            seen.add(key)
+            queries.append(query)
+        return queries[:3]
 
     @retry(
         stop=stop_after_attempt(3),
@@ -155,12 +173,19 @@ class ContentEnricher:
             else:
                 content_text = item.content[:4000]
 
-        # Step 1: AI identifies concepts to explain
-        queries = await self._extract_concepts(item, content_text)
+        # Step 1: AI identifies concepts to explain. Search the actual claim first
+        # so supporting references do not drift into generic definitions.
+        concepts = await self._extract_concepts(item, content_text)
+        queries = self._build_search_queries(item, concepts)
 
         # Step 2: Search web for each concept
         all_results = []
-        web_sections = []
+        primary_url = str(item.url)
+        primary_title = item.title
+        primary_excerpt = " ".join(content_text.split())[:1500]
+        web_sections = [
+            f"**Primary Source:**\n- [{primary_title}]({primary_url}): {primary_excerpt}"
+        ]
         for query in queries:
             results = await self._web_search(query)
             all_results.extend(results)
@@ -169,8 +194,13 @@ class ContentEnricher:
                 web_sections.append(f"**{query}:**\n" + "\n".join(lines))
         web_context = "\n\n".join(web_sections) if web_sections else ""
 
-        # Index of available URLs for citation validation
-        available_urls = {r["url"]: r["title"] for r in all_results if r.get("url")}
+        # Index of available URLs for citation validation. The original article
+        # is always the first auditable source, even if search does not return it.
+        available_urls = {primary_url: primary_title}
+        for result_item in all_results:
+            result_url = result_item.get("url")
+            if result_url:
+                available_urls.setdefault(result_url, result_item.get("title", ""))
 
         # Step 3: AI generates background grounded in search results
         user_prompt = CONTENT_ENRICHMENT_USER.format(
@@ -209,6 +239,7 @@ class ContentEnricher:
             for field in ("whats_new", "why_it_matters", "key_details"):
                 text = result.get(f"{field}_{lang}", "").strip()
                 if text:
+                    item.metadata[f"{field}_{lang}"] = text
                     parts.append(text)
             if parts:
                 item.metadata[f"detailed_summary_{lang}"] = " ".join(parts)
@@ -221,15 +252,22 @@ class ContentEnricher:
                 val = result[f"community_discussion_{lang}"]
                 item.metadata[f"community_discussion_{lang}"] = val.get("text") or str(val) if isinstance(val, dict) else str(val)
 
-        # Store citation sources — only URLs that actually came from our search results
-        if result.get("sources") and available_urls:
-            valid = [
-                {"url": u, "title": available_urls[u]}
-                for u in result["sources"]
-                if u in available_urls
-            ]
-            if valid:
-                item.metadata["sources"] = valid
+        # Store the primary article plus at most two validated supporting sources.
+        selected_urls = [primary_url]
+        if isinstance(result.get("sources"), list):
+            for source_url in result["sources"]:
+                if (
+                    isinstance(source_url, str)
+                    and source_url in available_urls
+                    and source_url not in selected_urls
+                ):
+                    selected_urls.append(source_url)
+                if len(selected_urls) == 3:
+                    break
+        item.metadata["sources"] = [
+            {"url": source_url, "title": available_urls[source_url]}
+            for source_url in selected_urls
+        ]
 
         # Backward-compatible fallback fields (English as default)
         item.metadata["detailed_summary"] = item.metadata.get("detailed_summary_en", "")

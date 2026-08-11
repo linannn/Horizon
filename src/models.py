@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import re
 from typing import Annotated, Literal, Optional, List, Dict, Any, NamedTuple, Union
-from pydantic import BaseModel, HttpUrl, Field, field_validator
+from pydantic import BaseModel, HttpUrl, Field, field_validator, model_validator
 
 
 class SourceType(str, Enum):
@@ -486,6 +486,8 @@ class FilteringConfig(BaseModel):
 
     ai_score_threshold: float = 7.0
     core_score_threshold: float = 7.0
+    watch_score_threshold: Optional[float] = Field(default=None, ge=0, le=10)
+    max_watch_items: Optional[int] = Field(default=None, gt=0)
     time_window_hours: int = 24
     focus_topics: List[str] = Field(default_factory=list)
     max_items: Optional[int] = Field(default=None, gt=0)
@@ -494,6 +496,22 @@ class FilteringConfig(BaseModel):
     fill_remaining_slots: bool = False
     default_group: str = "other"
     default_group_limit: Optional[int] = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_watch_items(self) -> "FilteringConfig":
+        """Require a complete, non-overlapping lower-priority score band."""
+        if (self.watch_score_threshold is None) != (self.max_watch_items is None):
+            raise ValueError(
+                "watch_score_threshold and max_watch_items must be configured together"
+            )
+        if (
+            self.watch_score_threshold is not None
+            and self.watch_score_threshold >= self.ai_score_threshold
+        ):
+            raise ValueError(
+                "watch_score_threshold must be lower than ai_score_threshold"
+            )
+        return self
 
 
 class Config(BaseModel):

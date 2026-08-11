@@ -21,126 +21,126 @@
         "owner": "openai",
         "repo": "codex",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "anthropics",
         "repo": "claude-code",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "google-gemini",
         "repo": "gemini-cli",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "github",
         "repo": "copilot-cli",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "anomalyco",
         "repo": "opencode",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "cline",
         "repo": "cline",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "aaif-goose",
         "repo": "goose",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "continuedev",
         "repo": "continue",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "Aider-AI",
         "repo": "aider",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "OpenHands",
         "repo": "OpenHands",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "vercel",
         "repo": "ai",
         "enabled": false,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "pydantic",
         "repo": "pydantic-ai",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "browser-use",
         "repo": "browser-use",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "browserbase",
         "repo": "stagehand",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "mastra-ai",
         "repo": "mastra",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "langchain-ai",
         "repo": "langgraph",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "modelcontextprotocol",
         "repo": "typescript-sdk",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       },
       {
         "type": "repo_releases",
         "owner": "modelcontextprotocol",
         "repo": "servers",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "release-monitoring"
       }
     ],
     "hackernews": {
@@ -279,6 +279,8 @@
   "filtering": {
     "ai_score_threshold": 5.0,
     "core_score_threshold": 7.0,
+    "watch_score_threshold": 4.0,
+    "max_watch_items": 4,
     "time_window_hours": 24,
     "focus_topics": [
       "AI coding tools and coding agents",
@@ -290,6 +292,11 @@
     "max_items_per_source": 2,
     "fill_remaining_slots": true,
     "category_groups": {
+      "releases": {
+        "name": "Project Releases",
+        "limit": 4,
+        "categories": ["release-monitoring"]
+      },
       "focus": {
         "name": "AI Coding and Agents",
         "limit": 12,

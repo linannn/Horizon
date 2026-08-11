@@ -462,6 +462,8 @@ Content is scored 0-10:
   "filtering": {
     "ai_score_threshold": 7.0,
     "core_score_threshold": 7.0,
+    "watch_score_threshold": 5.0,
+    "max_watch_items": 4,
     "time_window_hours": 24,
     "max_items": 20,
     "max_items_per_source": 2,
@@ -484,9 +486,16 @@ Content is scored 0-10:
 }
 ```
 
-- `ai_score_threshold`: Only include content scoring >= this value
+- `ai_score_threshold`: Primary inclusion threshold. Direct Reader Focus matches
+  below it are included only when the watch settings are enabled.
 - `core_score_threshold`: Score used to label selected items as core instead of
   worth watching
+- `watch_score_threshold`: Optional lower score bound for direct Reader Focus
+  matches shown in the compact More Updates section. Must be lower than
+  `ai_score_threshold` and requires `max_watch_items`.
+- `max_watch_items`: Maximum number of lower-priority Reader Focus matches to
+  include. Requires `watch_score_threshold`. Items outside Reader Focus are
+  never backfilled by this setting.
 - `time_window_hours`: Fetch content from last N hours
 - `max_items`: Optional final cap after all group limits are applied
 - `max_items_per_source`: Optional cap for one feed, repository, or other
@@ -502,7 +511,7 @@ Content is scored 0-10:
 - `default_group_limit`: Optional positive limit for unmatched items. If omitted,
   unmatched items are unlimited except for `max_items`.
 
-Balanced digest filtering runs after AI score threshold filtering and topic
+Balanced digest filtering runs after primary/watch score filtering and topic
 deduplication, but before enrichment. This reduces enrichment calls to only the
 items that can appear in the final digest.
 
