@@ -159,6 +159,17 @@ def test_analyze_item_includes_reader_focus_and_source_category():
     assert '"focus_relevant"' in captured["user"]
     assert '"substantive"' in captured["user"]
     assert "demos or vibe experiments" in captured["system"]
+    assert (
+        "Treat ordinary bug fixes, dependency updates, and releases whose only "
+        "change is adding model or provider support as routine maintenance"
+        in captured["system"]
+    )
+    assert (
+        "Unless routine maintenance fixes a critical security, data-loss, "
+        "compatibility, or measured performance problem, set substantive to false "
+        "and score it 3 or lower"
+        in captured["system"]
+    )
 
 
 def test_topic_dedup_prompt_collapses_overlapping_announcement_families():

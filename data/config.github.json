@@ -166,7 +166,7 @@
         "name": "GitHub Changelog",
         "url": "https://github.blog/changelog/feed/",
         "enabled": true,
-        "category": "engineering-practice"
+        "category": "release-monitoring"
       },
       {
         "name": "The Pragmatic Engineer",
@@ -294,7 +294,7 @@
     "category_groups": {
       "releases": {
         "name": "Project Releases",
-        "limit": 4,
+        "limit": 2,
         "categories": ["release-monitoring"]
       },
       "focus": {
@@ -310,12 +310,12 @@
       },
       "discovery": {
         "name": "Discovery",
-        "limit": 2,
+        "limit": 4,
         "categories": ["discovery"]
       },
       "engineering": {
         "name": "Engineering Practice",
-        "limit": 3,
+        "limit": 4,
         "allow_backfill": true,
         "categories": ["engineering-practice"]
       }

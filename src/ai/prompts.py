@@ -81,6 +81,8 @@ Judge substantive value separately:
 - Set substantive to true only when the item contains at least one concrete, reusable, or decision-relevant takeaway backed by specific details
 - Concrete product changes, reusable workflows, implementation details, measured engineering lessons, and specific limitations can be substantive
 - Set substantive to false for demos or vibe experiments without reusable implementation detail, promotional or opinion-only posts, and release entries whose body contains no meaningful changelog
+- Treat ordinary bug fixes, dependency updates, and releases whose only change is adding model or provider support as routine maintenance
+- Unless routine maintenance fixes a critical security, data-loss, compatibility, or measured performance problem, set substantive to false and score it 3 or lower
 - A fun prototype or impressive output alone is not substantive
 - Non-substantive items must score 4 or lower
 """
