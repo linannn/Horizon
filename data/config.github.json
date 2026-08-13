@@ -259,6 +259,13 @@
         "category": "ai-news"
       },
       {
+        "name": "AI 热榜",
+        "url": "https://aihot.virxact.com/feed/full.xml",
+        "enabled": true,
+        "category": "major-ai",
+        "original_link_text": "阅读原文"
+      },
+      {
         "name": "GitHub Trending - Daily",
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
@@ -286,7 +293,8 @@
       "AI coding tools and coding agents",
       "MCP and agent ecosystems",
       "Practical AI engineering workflows and best practices",
-      "Developer-facing AI product releases and open-source tools"
+      "Developer-facing AI product releases and open-source tools",
+      "Major AI model, research, and product announcements with material developer impact"
     ],
     "max_items": 20,
     "max_items_per_source": 2,
@@ -307,6 +315,11 @@
         "name": "General AI News",
         "limit": 3,
         "categories": ["ai-news"]
+      },
+      "major-ai": {
+        "name": "Major AI Events",
+        "limit": 5,
+        "categories": ["major-ai"]
       },
       "discovery": {
         "name": "Discovery",

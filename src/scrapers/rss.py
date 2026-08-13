@@ -6,10 +6,13 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
-from typing import List, Optional
 from email.utils import parsedate_to_datetime
-import httpx
+from typing import List, Optional
+from urllib.parse import urlparse
+
 import feedparser
+import httpx
+from bs4 import BeautifulSoup
 
 from .base import BaseScraper
 from ..extractors import ExtractorRegistry
@@ -102,29 +105,45 @@ class RSSScraper(BaseScraper):
 
                 # Extract content
                 content = self._extract_content(entry)
+                aggregation_url = entry.get("link", str(source.url))
+                item_url = self._extract_original_link(
+                    entry, source.original_link_text
+                ) or str(aggregation_url)
+                author = entry.get("author", source.name)
 
                 if source.content_extractor and self._extractors:
                     extractor = self._extractors.get(source.content_extractor)
                     if extractor:
-                        url = entry.get("link", "")
-                        if url:
-                            full = await extractor.extract(url, self.client)
+                        if item_url:
+                            full = await extractor.extract(item_url, self.client)
                             if full:
                                 content = full
+
+                metadata = {
+                    "feed_name": source.name,
+                    "category": source.category,
+                    "tags": [tag.term for tag in entry.get("tags", [])],
+                }
+                if item_url != str(aggregation_url):
+                    metadata["aggregation_url"] = str(aggregation_url)
+                    origin_domain = urlparse(item_url).hostname
+                    if origin_domain:
+                        metadata["origin_domain"] = origin_domain
+                    author_detail = entry.get("author_detail", {})
+                    origin_source = author_detail.get("name")
+                    if origin_source:
+                        metadata["origin_source"] = origin_source
+                        author = origin_source
 
                 item = ContentItem(
                     id=self._generate_id("rss", feed_id, entry_hash),
                     source_type=SourceType.RSS,
                     title=entry.get("title", "Untitled"),
-                    url=entry.get("link", str(source.url)),
+                    url=item_url,
                     content=content,
-                    author=entry.get("author", source.name),
+                    author=author,
                     published_at=published_at,
-                    metadata={
-                        "feed_name": source.name,
-                        "category": source.category,
-                        "tags": [tag.term for tag in entry.get("tags", [])],
-                    },
+                    metadata=metadata,
                 )
                 items.append(item)
 
@@ -134,6 +153,22 @@ class RSSScraper(BaseScraper):
             logger.warning("Error parsing RSS feed %s: %s", source.name, e)
 
         return items
+
+    @staticmethod
+    def _extract_original_link(entry: dict, link_text: Optional[str]) -> Optional[str]:
+        """Extract a linked original article from an aggregator feed entry."""
+        if not link_text:
+            return None
+
+        content = RSSScraper._extract_content(entry)
+        soup = BeautifulSoup(content, "html.parser")
+        for link in soup.find_all("a", href=True):
+            if link.get_text(strip=True) != link_text:
+                continue
+            href = str(link["href"])
+            if urlparse(href).scheme in {"http", "https"}:
+                return href
+        return None
 
     def _parse_date(self, entry: dict) -> datetime:
         """Parse publication date from feed entry.
@@ -161,7 +196,8 @@ class RSSScraper(BaseScraper):
 
         return None
 
-    def _extract_content(self, entry: dict) -> str:
+    @staticmethod
+    def _extract_content(entry: dict) -> str:
         """Extract text content from feed entry.
 
         Args:

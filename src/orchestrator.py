@@ -525,6 +525,10 @@ class HorizonOrchestrator:
         meta = item.metadata
         if meta.get("subreddit"):
             return f"r/{meta['subreddit']}"
+        if meta.get("origin_source"):
+            return meta["origin_source"]
+        if meta.get("origin_domain"):
+            return meta["origin_domain"]
         if meta.get("feed_name"):
             return meta["feed_name"]
         if meta.get("channel"):

@@ -19,6 +19,18 @@ _FEED = """<?xml version="1.0" encoding="UTF-8" ?>
   </item>
 </channel></rss>
 """
+_AIHOT_FEED = """<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0"><channel><title>AI 热榜</title>
+  <item>
+    <guid>https://aihot.virxact.com/items/qwen-3-8</guid>
+    <title>Qwen3.8 正式发布</title>
+    <link>https://aihot.virxact.com/items/qwen-3-8</link>
+    <pubDate>Fri, 24 Apr 2026 12:00:00 GMT</pubDate>
+    <description><![CDATA[新模型发布。<br/><a href="https://qwen.ai/blog/qwen3-8">阅读原文</a>]]></description>
+    <author>noreply@aihot.virxact.com (Qwen：Blog)</author>
+  </item>
+</channel></rss>
+"""
 _SINCE = datetime(2026, 4, 24, 0, 0, tzinfo=timezone.utc)
 
 
@@ -90,3 +102,24 @@ def test_unknown_extractor_name_ignored() -> None:
 
     assert len(items) == 1
     assert items[0].content == "Short summary from feed."
+
+
+def test_aggregated_rss_uses_original_article_link_and_source_domain() -> None:
+    client = _make_feed_client(_AIHOT_FEED)
+    source = RSSSourceConfig(
+        name="AI 热榜",
+        url="https://aihot.virxact.com/feed/full.xml",
+        category="major-ai",
+        original_link_text="阅读原文",
+    )
+
+    items = asyncio.run(RSSScraper([source], client).fetch(_SINCE))
+
+    assert len(items) == 1
+    assert str(items[0].url) == "https://qwen.ai/blog/qwen3-8"
+    assert items[0].metadata["aggregation_url"] == (
+        "https://aihot.virxact.com/items/qwen-3-8"
+    )
+    assert items[0].metadata["origin_domain"] == "qwen.ai"
+    assert items[0].metadata["origin_source"] == "Qwen：Blog"
+    assert items[0].author == "Qwen：Blog"

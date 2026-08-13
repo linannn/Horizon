@@ -148,6 +148,24 @@ def test_balanced_digest_limits_items_from_one_source() -> None:
     assert result.source_limit_removed == 1
 
 
+def test_aggregated_feed_source_limit_uses_original_sources() -> None:
+    filtering = FilteringConfig(max_items=20, max_items_per_source=2)
+    items = [
+        make_item("qwen", 10.0, "major-ai"),
+        make_item("xai", 9.0, "major-ai"),
+        make_item("anthropic", 8.0, "major-ai"),
+    ]
+    for item, source in zip(items, ["Qwen", "xAI", "Anthropic"]):
+        item.metadata["feed_name"] = "AI 热榜"
+        item.metadata["origin_domain"] = "x.com"
+        item.metadata["origin_source"] = source
+
+    result = make_orchestrator(filtering).apply_balanced_digest(items)
+
+    assert [item.id for item in result.items] == ["qwen", "xai", "anthropic"]
+    assert result.source_limit_removed == 0
+
+
 def test_filter_items_requires_reader_focus_relevance() -> None:
     filtering = FilteringConfig(
         ai_score_threshold=5.0,

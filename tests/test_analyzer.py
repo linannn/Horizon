@@ -187,6 +187,14 @@ def test_analysis_prompt_excludes_adjacent_ai_security_from_reader_focus():
     assert "concrete design primitives" in CONTENT_ANALYSIS_SYSTEM
 
 
+def test_analysis_prompt_keeps_major_ai_events_with_developer_impact():
+    assert "major AI model, research, or product announcement" in CONTENT_ANALYSIS_SYSTEM
+    assert "developer tool choices, agent capabilities" in CONTENT_ANALYSIS_SYSTEM
+    assert "open-source availability, cost, context, or deployment" in (
+        CONTENT_ANALYSIS_SYSTEM
+    )
+
+
 @pytest.mark.parametrize(
     "result",
     [

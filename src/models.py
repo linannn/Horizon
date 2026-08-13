@@ -205,6 +205,7 @@ class RSSSourceConfig(BaseModel):
     enabled: bool = True
     category: Optional[str] = None
     content_extractor: Optional[str] = None
+    original_link_text: Optional[str] = None
 
 
 class RedditSubredditConfig(BaseModel):

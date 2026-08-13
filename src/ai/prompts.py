@@ -67,19 +67,21 @@ When Reader Focus is provided:
 - Judge focus relevance separately from general importance
 - Source Category is only a routing hint and is not proof of focus relevance
 - Set focus_relevant to true only when the item directly provides an AI coding tool, coding-agent capability, MCP/agent ecosystem update, practical AI engineering workflow, or developer-facing AI tool release
+- A major AI model, research, or product announcement is focus relevant when it materially changes developer tool choices, agent capabilities, open-source availability, cost, context, or deployment decisions
 - General AI industry news, model-only news, and AI security news are not focus relevant unless they materially change a coding or agent workflow
 - General-purpose AI product vulnerabilities, enterprise AI monitoring or gateway products, and standalone safety or moderation models are not focus relevant, even when technically substantive
 - Security fixes to AI coding tools and coding agents are focus relevant when they directly affect a developer's coding workflow
 - Reusable security architecture for developers building agents may be focus relevant only when it provides concrete design primitives, not merely a vendor security product
-- Pure model launches, pricing, benchmarks, or comparisons without a material coding or agent workflow impact must score 5 or lower
+- Pure model launches, pricing, benchmarks, or comparisons without material developer or agent impact must score 5 or lower
 - Broad conceptual or theoretical AI pieces without an actionable tool, workflow, or engineering technique must score 6 or lower
-- Scores of 7 or higher require an actionable tool, workflow, or engineering technique directly relevant to the reader's focus
+- Scores of 7 or higher require an actionable tool, workflow, engineering technique, or decision-relevant major AI development directly relevant to the reader's focus
 - Prefer practical releases, techniques, limitations, and engineering practices within the reader's focus
 - When Reader Focus is not specified, set focus_relevant to true
 
 Judge substantive value separately:
 - Set substantive to true only when the item contains at least one concrete, reusable, or decision-relevant takeaway backed by specific details
 - Concrete product changes, reusable workflows, implementation details, measured engineering lessons, and specific limitations can be substantive
+- Major releases or research with concrete capability, availability, cost, context, or deployment details can be substantive because they inform engineering decisions
 - Set substantive to false for demos or vibe experiments without reusable implementation detail, promotional or opinion-only posts, and release entries whose body contains no meaningful changelog
 - Treat ordinary bug fixes, dependency updates, and releases whose only change is adding model or provider support as routine maintenance
 - Unless routine maintenance fixes a critical security, data-loss, compatibility, or measured performance problem, set substantive to false and score it 3 or lower
