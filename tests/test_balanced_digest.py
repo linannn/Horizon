@@ -7,6 +7,8 @@ import pytest
 from pydantic import ValidationError
 from rich.console import Console
 
+from src.ai.enricher import EnrichmentBatchResult
+
 from src.models import (
     AIConfig,
     CategoryGroupConfig,
@@ -304,6 +306,7 @@ def test_run_applies_balanced_digest_before_enrichment(tmp_path, monkeypatch) ->
 
     async def enrich_important_items(input_items):  # type: ignore[no-untyped-def]
         enriched_ids.extend(item.id for item in input_items)
+        return EnrichmentBatchResult(succeeded_ids=[item.id for item in input_items])
 
     monkeypatch.setattr(orchestrator, "fetch_all_sources", fetch_all_sources)
     monkeypatch.setattr(orchestrator, "analyze_items", analyze_content)
@@ -351,6 +354,7 @@ def test_run_balances_after_twitter_reanalysis(tmp_path, monkeypatch) -> None:
 
     async def enrich_important_items(input_items):  # type: ignore[no-untyped-def]
         enriched_ids.extend(item.id for item in input_items)
+        return EnrichmentBatchResult(succeeded_ids=[item.id for item in input_items])
 
     monkeypatch.setattr(orchestrator, "fetch_all_sources", fetch_all_sources)
     monkeypatch.setattr(orchestrator, "analyze_items", analyze_content)

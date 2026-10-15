@@ -503,6 +503,8 @@ class HorizonPipelineService:
 
         orchestrator = self._orchestrator(ctx)
         enrichment_result = await orchestrator.enrich_items(items)
+        succeeded_ids = set(enrichment_result.succeeded_ids)
+        items = [item for item in items if item.id in succeeded_ids]
 
         artifact_path = None
         if enrichment_result.status == "failure":
@@ -561,6 +563,17 @@ class HorizonPipelineService:
 
         total_fetched = self._total_fetched(run_id, fallback=len(items))
         date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        if stage == "enriched" and items:
+            items = [
+                item for item in items
+                if item.processing and language in item.processing.artifacts
+            ]
+            if not items:
+                raise HorizonMcpError(
+                    code="HZ_ENRICHMENT_FAILED",
+                    message=f"No enriched content for language {language}; no summary will be published.",
+                )
 
         summarizer = ctx.runtime.DailySummarizer(
             profile_names=self._profiles(ctx).names,
@@ -645,8 +658,12 @@ class HorizonPipelineService:
                 horizon_path=horizon_path,
                 config_path=config_path,
             )
-            if enrich_result["status"] != "failure":
-                stage_for_summary = "enriched"
+            if enrich_result["status"] == "failure":
+                raise HorizonMcpError(
+                    code="HZ_ENRICHMENT_FAILED",
+                    message="Content enrichment failed for every selected item; no summary will be published.",
+                )
+            stage_for_summary = "enriched"
 
         ctx, _, _ = self._build_context(
             horizon_path=horizon_path,

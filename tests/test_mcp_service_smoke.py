@@ -11,6 +11,8 @@ import pytest
 from src.models import (
     ClassificationResult,
     ContentAnalysis,
+    ContentArtifact,
+    ContentBlock,
     ContentItem,
     DigestConfig,
     ProcessingConfig,
@@ -22,6 +24,7 @@ from src.ai.summarizer import DailySummarizer
 from src.ai.enricher import EnrichmentBatchResult
 from src.mcp.server import hz_get_metrics
 from src.mcp.service import HorizonPipelineService
+from src.mcp.errors import HorizonMcpError
 from src.orchestrator import (
     BalancedDigestResult,
     FetchReport,
@@ -477,6 +480,34 @@ def test_generate_summary_persists_informative_empty_summary(
     assert result["preview"] == expected[:1200]
 
 
+@pytest.mark.parametrize("all_missing", [False, True])
+def test_enriched_summary_requires_target_language_artifacts(tmp_path, monkeypatch, all_missing):
+    service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
+    service.run_store.create_run("run-language")
+    previous = service.run_store.save_summary("run-language", "zh", "Previously published summary")
+    good, missing = make_item("good", 8.0), make_item("missing", 7.0)
+    if not all_missing:
+        good.processing.artifacts["zh"] = ContentArtifact(
+            language="zh", title="中文标题",
+            blocks=[ContentBlock(id="summary", title="摘要", content="有效的中文正文。", primary=True)],
+        )
+    ctx = SimpleNamespace(
+        runtime=SimpleNamespace(DailySummarizer=DailySummarizer),
+        config=SimpleNamespace(digest=DigestConfig()),
+    )
+    monkeypatch.setattr(service, "_profiles", lambda ctx: PROFILES)
+    monkeypatch.setattr(service, "_load_stage_items", lambda **kwargs: ([good, missing], ctx))
+    if all_missing:
+        with pytest.raises(HorizonMcpError, match="zh"):
+            asyncio.run(service.generate_summary("run-language", language="zh", source_stage="enriched"))
+        assert previous.read_text() == "Previously published summary"
+    else:
+        result = asyncio.run(service.generate_summary("run-language", language="zh", source_stage="enriched"))
+        assert result["items_used"] == 1
+        assert "中文标题" in result["preview"]
+        assert "https://example.com/missing" not in previous.read_text()
+
+
 def test_run_pipeline_skips_enrichment_when_filter_is_empty(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -522,7 +553,7 @@ def test_run_pipeline_skips_enrichment_when_filter_is_empty(
     assert [summary["preview"] for summary in result["summaries"]] == ["", ""]
 
 
-def test_run_pipeline_uses_filtered_stage_when_all_enrichment_fails(
+def test_run_pipeline_stops_before_summary_when_all_enrichment_fails(
     tmp_path: Path, monkeypatch
 ) -> None:
     service = HorizonPipelineService(runs_root=tmp_path / "mcp-runs")
@@ -560,10 +591,10 @@ def test_run_pipeline_uses_filtered_stage_when_all_enrichment_fails(
     )
     monkeypatch.setattr(service.run_store, "load_meta", lambda run_id: {})
 
-    result = asyncio.run(service.run_pipeline())
+    with pytest.raises(HorizonMcpError, match="enrichment failed"):
+        asyncio.run(service.run_pipeline())
 
-    assert calls == ["filtered"]
-    assert result["enrich"]["status"] == "failure"
+    assert calls == []
 
 
 def test_enrich_items_propagates_batch_failure(tmp_path: Path, monkeypatch) -> None:
@@ -623,7 +654,7 @@ def test_enrich_items_reports_partial_failure_truthfully(
     assert result["failed_ids"] == [failed_item.id]
     assert result["meta"]["enrichment_status"] == "partial_failure"
     assert result["meta"]["enriched_count"] == 1
-    assert len(service.run_store.load_items("run-partial", "enriched")) == 2
+    assert [item["id"] for item in service.run_store.load_items("run-partial", "enriched")] == [successful_item.id]
 
 
 def test_enrich_items_does_not_create_stage_when_all_items_fail(

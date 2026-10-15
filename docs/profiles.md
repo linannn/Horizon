@@ -391,6 +391,12 @@ with:
 Artifacts generated for `zh` are normalized to Simplified Chinese before they
 are stored and rendered, including older artifacts read during rendering.
 
+Invalid tool plans and empty or punctuation-only titles and blocks receive one
+correction attempt. Optional blocks without useful content should be omitted.
+The daily pipeline publishes only successfully enriched items. If enrichment
+fails for every selected item, it stops before writing or publishing a summary,
+leaving the previously published digest intact.
+
 The Markdown briefing renders a block marked `primary` directly below the item
 title and before the source line, without a redundant block heading. Profiles
 without a primary block show the source first and then render every block under

@@ -19,6 +19,7 @@ from src.models import (
     SourceType,
 )
 from src.processing import ProfileRegistry
+from src.processing.profiles import LoadedProfile
 from src.processing.tools import ToolRegistry, ToolResult
 
 
@@ -48,6 +49,45 @@ def make_item() -> ContentItem:
             ),
         ),
     )
+
+
+def make_tool_only_profiles() -> ProfileRegistry:
+    profile = PROFILES.get("tech-news")
+    background = next(
+        block for block in profile.definition.enrichment.blocks
+        if block.id == "background"
+    )
+    enrichment = profile.definition.enrichment.model_copy(update={"blocks": [background]})
+    definition = profile.definition.model_copy(update={"enrichment": enrichment})
+    tool_only_profile = LoadedProfile(
+        definition=definition,
+        match_prompt=profile.match_prompt,
+        analysis_prompt=profile.analysis_prompt,
+        enrichment_prompt=profile.enrichment_prompt,
+    )
+    return ProfileRegistry({profile.id: tool_only_profile}, profile.id)
+
+
+def queued_ai(responses):
+    requests = []
+    responses = iter(responses)
+
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        return next(responses)
+
+    return SimpleNamespace(complete=complete), requests
+
+
+class RecordingTools:
+    names = {"web_search", "history_search"}
+
+    def __init__(self):
+        self.calls = []
+
+    async def execute(self, request_id, block_id, tool, arguments, current_item=None):
+        self.calls.append((block_id, tool, arguments))
+        return ToolResult(request_id, block_id, tool, [])
 
 
 class FakeTools:
@@ -174,29 +214,109 @@ def test_enrichment_generates_blocks_and_validated_sources():
 
 
 def test_enrichment_rejects_tool_on_unapproved_block():
-    async def complete(**kwargs):
-        return json.dumps(
-            {
-                "tool_requests": [
-                    {
-                        "block_id": "summary",
-                        "tool": "web_search",
-                        "arguments": {"query": "unapproved"},
-                        "purpose": "Rewrite the news",
-                    }
-                ]
-            }
-        )
+    response = json.dumps(
+        {
+            "tool_requests": [
+                {
+                    "block_id": "summary",
+                    "tool": "web_search",
+                    "arguments": {"query": "unapproved"},
+                    "purpose": "Rewrite the news",
+                }
+            ]
+        }
+    )
+    ai_client, requests = queued_ai([response, response])
 
     enricher = ContentEnricher(
-        SimpleNamespace(complete=complete),
+        ai_client,
         PROFILES,
         ["zh"],
         tools=FakeTools(),
     )
 
-    with pytest.raises(ValueError, match="not allowed"):
+    with pytest.raises(ValueError, match="Invalid enrichment tool plan") as exc_info:
         asyncio.run(enricher._enrich_item(make_item()))
+
+    assert len(requests) == 2
+    assert "not allowed" in str(exc_info.value.__cause__)
+    assert "not allowed" in requests[1]["user"]
+
+
+def test_enrichment_repairs_invalid_tool_plan_before_executing_any_tool():
+    responses = iter(
+        [
+            json.dumps({"tool_requests": [
+                {
+                    "block_id": "background",
+                    "tool": "web_search",
+                    "arguments": {"query": "project architecture"},
+                    "purpose": "Find project context",
+                },
+                {
+                    "block_id": "summary",
+                    "tool": "web_search",
+                    "arguments": {"query": "unapproved"},
+                    "purpose": "Rewrite the news",
+                },
+            ]}),
+            json.dumps({"tool_requests": [
+                {
+                    "block_id": "background",
+                    "tool": "web_search",
+                    "arguments": {"query": "project architecture"},
+                    "purpose": "Find project context",
+                }
+            ]}),
+        ]
+    )
+    ai_client, requests = queued_ai(responses)
+    tools = RecordingTools()
+
+    enricher = ContentEnricher(
+        ai_client, PROFILES, ["en"], tools=tools
+    )
+
+    results = asyncio.run(
+        enricher._plan_and_execute_tools(make_item(), PROFILES.get("tech-news"))
+    )
+
+    assert len(requests) == 2
+    assert "not allowed" in requests[1]["user"]
+    assert [call[0] for call in tools.calls] == ["background", "background"]
+    assert all(call[0] != "summary" for call in tools.calls)
+    assert [result.block_id for result in results] == ["background", "background"]
+
+
+def test_enrichment_repairs_invalid_web_search_query_before_execution():
+    responses = iter(
+        [
+            json.dumps({"tool_requests": [
+                {
+                    "block_id": "background",
+                    "tool": "web_search",
+                    "arguments": {"query": "   "},
+                    "purpose": "Find project context",
+                }
+            ]}),
+            json.dumps({"tool_requests": []}),
+        ]
+    )
+    ai_client, requests = queued_ai(responses)
+    tools = RecordingTools()
+
+    enricher = ContentEnricher(
+        ai_client, PROFILES, ["en"], tools=tools
+    )
+
+    results = asyncio.run(
+        enricher._plan_and_execute_tools(make_item(), PROFILES.get("tech-news"))
+    )
+
+    assert len(requests) == 2
+    assert "non-empty query" in requests[1]["user"]
+    assert tools.calls == []
+    assert results == []
 
 
 def test_enrichment_rejects_malformed_tool_plan():
@@ -265,6 +385,139 @@ def test_enrichment_repairs_malformed_tool_plan_once():
     assert [source.url for source in item.processing.artifacts["en"].sources] == [
         str(item.url)
     ]
+
+
+def _artifact_response(invalid_field=None):
+    title = "AI release"
+    summary_title = "AI update"
+    summary_content = "A new version is available."
+    if invalid_field == "artifact_title":
+        title = "…"
+    elif invalid_field == "block_title":
+        summary_title = "…"
+    elif invalid_field == "block_content":
+        summary_content = "..."
+    return json.dumps({
+        "title": title,
+        "blocks": [
+            {
+                "id": "summary",
+                "title": summary_title,
+                "content": summary_content,
+                "source_refs": [],
+            },
+            {
+                "id": "background",
+                "title": "Background",
+                "content": "The release changes the system architecture.",
+                "source_refs": [],
+            },
+        ],
+    })
+
+
+@pytest.mark.parametrize(
+    ("invalid_field", "persistent"),
+    [
+        (field, persistent)
+        for field in ("artifact_title", "block_title", "block_content")
+        for persistent in (False, True)
+    ],
+)
+def test_enrichment_repairs_or_rejects_ellipsis_artifact_fields(
+    invalid_field, persistent
+):
+    ai_client, requests = queued_ai([
+        json.dumps({"tool_requests": []}),
+        _artifact_response(invalid_field),
+        _artifact_response(invalid_field if persistent else None),
+    ])
+    item = make_item()
+    enricher = ContentEnricher(
+        ai_client, PROFILES, ["en"], tools=FakeTools()
+    )
+
+    if persistent:
+        with pytest.raises(ValueError, match="Invalid enrichment artifact"):
+            asyncio.run(enricher._enrich_item(item))
+    else:
+        asyncio.run(enricher._enrich_item(item))
+
+    assert len(requests) == 3
+    assert "not satisfy the output contract" in requests[2]["user"]
+    assert "only punctuation" in requests[2]["user"]
+    if persistent:
+        assert "en" not in item.processing.artifacts
+    else:
+        assert item.processing.artifacts["en"].title == "AI release"
+
+
+def _header_response(invalid_field=None):
+    title = "AI release"
+    block_title = "Background"
+    block_content = "The earlier system architecture provides useful context."
+    if invalid_field == "header_title":
+        title = "…"
+    elif invalid_field == "block_title":
+        block_title = "!!!"
+    elif invalid_field == "block_content":
+        block_content = "..."
+    return json.dumps({
+        "title": title,
+        "block": {
+            "id": "background",
+            "title": block_title,
+            "content": block_content,
+            "source_refs": [],
+        },
+    })
+
+
+@pytest.mark.parametrize(
+    ("invalid_field", "persistent"),
+    [
+        (field, persistent)
+        for field in ("header_title", "block_title", "block_content")
+        for persistent in (False, True)
+    ],
+)
+def test_enrichment_repairs_or_rejects_ellipsis_header_fields(
+    invalid_field, persistent
+):
+    ai_client, requests = queued_ai([
+        json.dumps({"tool_requests": [{
+            "block_id": "background",
+            "tool": "web_search",
+            "arguments": {"query": "project architecture"},
+            "purpose": "Find project context",
+        }]}),
+        _header_response(invalid_field),
+        _header_response(invalid_field if persistent else None),
+    ])
+    item = make_item()
+    tools = RecordingTools()
+    enricher = ContentEnricher(
+        ai_client,
+        make_tool_only_profiles(),
+        ["en"],
+        tools=tools,
+    )
+
+    if persistent:
+        with pytest.raises(ValueError, match="Invalid enrichment block: background"):
+            asyncio.run(enricher._enrich_item(item))
+    else:
+        asyncio.run(enricher._enrich_item(item))
+
+    assert len(requests) == 3
+    assert "not satisfy the output contract" in requests[2]["user"]
+    assert "only punctuation" in requests[2]["user"]
+    assert len(tools.calls) == 2
+    if persistent:
+        assert "en" not in item.processing.artifacts
+    else:
+        assert item.processing.artifacts["en"].title == "AI release"
+        assert item.processing.artifacts["en"].blocks[0].title == "Background"
 
 
 def test_enrichment_repairs_empty_blog_block_once():
@@ -507,6 +760,39 @@ def test_enrichment_rejects_empty_required_block():
         ContentEnricher._validate_blocks(
             [block], PROFILES.get("tech-news"), []
         )
+
+
+@pytest.mark.parametrize(
+    ("title", "content"),
+    [("…", "Valid content."), ("Valid title", "!!!")],
+)
+def test_enrichment_rejects_placeholder_text_in_final_blocks(title, content):
+    block = ContentBlock(
+        id="background",
+        type="section",
+        title=title,
+        content=content,
+        source_refs=[],
+    )
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        ContentEnricher._validate_blocks(
+            [block], make_tool_only_profiles().get("tech-news"), []
+        )
+
+
+def test_enrichment_accepts_short_chinese_text_in_final_blocks():
+    block = ContentBlock(
+        id="background",
+        type="section",
+        title="AI",
+        content="新",
+        source_refs=[],
+    )
+
+    ContentEnricher._validate_blocks(
+        [block], make_tool_only_profiles().get("tech-news"), []
+    )
 
 
 def test_enrichment_batch_reports_failure_without_discarding_successes():

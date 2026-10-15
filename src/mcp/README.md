@@ -55,6 +55,12 @@ Each run writes artifacts under `data/mcp-runs/<run_id>/`:
 - `enriched_items.json`
 - `summary-<lang>.md`
 
+The `enriched` stage contains only successfully enriched items; failure details
+remain in `meta.json`. Summaries from that stage require an artifact in the
+requested language. If every selected item fails enrichment, `hz_run_pipeline`
+returns `HZ_ENRICHMENT_FAILED` without generating or publishing a summary.
+Explicit analysis-only runs with `enrich=false` still use the `filtered` stage.
+
 ## Design Principles
 
 1. Keep Horizon as the single source of business logic.

@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+
+def _has_alphanumeric_text(value: str) -> bool:
+    return any(character.isalnum() for character in value)
+
+
 class ToolRequest(BaseModel):
     block_id: str
     tool: str
@@ -54,11 +59,17 @@ class GeneratedArtifact(BaseModel):
 
     @model_validator(mode="after")
     def validate_non_empty_content(self) -> "GeneratedArtifact":
-        if not self.title.strip():
-            raise ValueError("title must not be empty")
+        if not _has_alphanumeric_text(self.title):
+            raise ValueError(
+                "title must not be empty or contain only punctuation"
+            )
         for block in self.blocks:
-            if not block.title.strip() or not block.content.strip():
-                raise ValueError(f"block {block.id} must not be empty")
+            if not _has_alphanumeric_text(block.title) or not _has_alphanumeric_text(
+                block.content
+            ):
+                raise ValueError(
+                    f"block {block.id} must not be empty or contain only punctuation"
+                )
         return self
 
 
@@ -66,12 +77,22 @@ class GeneratedBlock(BaseModel):
     title: str = ""
     block: Optional[ContentBlock] = None
 
+    @field_validator("title")
+    @classmethod
+    def validate_title_if_present(cls, value: str) -> str:
+        if value and not _has_alphanumeric_text(value):
+            raise ValueError("must not be empty or contain only punctuation")
+        return value
+
     @model_validator(mode="after")
     def validate_non_empty_block(self) -> "GeneratedBlock":
         if self.block and (
-            not self.block.title.strip() or not self.block.content.strip()
+            not _has_alphanumeric_text(self.block.title)
+            or not _has_alphanumeric_text(self.block.content)
         ):
-            raise ValueError(f"block {self.block.id} must not be empty")
+            raise ValueError(
+                f"block {self.block.id} must not be empty or contain only punctuation"
+            )
         return self
 
 
@@ -79,8 +100,8 @@ class GeneratedBlockWithHeader(GeneratedBlock):
     @field_validator("title")
     @classmethod
     def validate_non_empty_title(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("must not be empty")
+        if not _has_alphanumeric_text(value):
+            raise ValueError("must not be empty or contain only punctuation")
         return value
 
 
@@ -293,11 +314,27 @@ class ContentEnricher:
         if not any(allowed.values()):
             return []
 
+        def validate_plan(plan: ToolPlan) -> None:
+            for request in plan.tool_requests:
+                if request.block_id not in allowed:
+                    raise ValueError(
+                        f"Tool request targets unknown block: {request.block_id}"
+                    )
+                if request.tool not in allowed[request.block_id]:
+                    raise ValueError(
+                        f"Tool {request.tool} is not allowed for block {request.block_id}"
+                    )
+                if request.tool == "web_search":
+                    query = request.arguments.get("query")
+                    if not isinstance(query, str) or not query.strip():
+                        raise ValueError("web_search requires a non-empty query")
+
         plan = await self._complete_model(
             ToolPlan,
             system=tool_planning_prompt(profile.definition.enrichment.blocks),
             user=item_context(item, profile, include_content=True),
             error_message="Invalid enrichment tool plan",
+            validator=validate_plan,
         )
 
         requests = list(plan.tool_requests)
@@ -316,12 +353,6 @@ class ContentEnricher:
         for request in requests:
             if len(results) >= MAX_TOOL_REQUESTS:
                 break
-            if request.block_id not in allowed:
-                raise ValueError(f"Tool request targets unknown block: {request.block_id}")
-            if request.tool not in allowed[request.block_id]:
-                raise ValueError(
-                    f"Tool {request.tool} is not allowed for block {request.block_id}"
-                )
             if request.tool == "history_search":
                 if history_requested:
                     continue
@@ -514,8 +545,12 @@ class ContentEnricher:
             if block.id in seen:
                 raise ValueError(f"Artifact contains duplicate block: {block.id}")
             seen.add(block.id)
-            if not block.title.strip() or not block.content.strip():
-                raise ValueError(f"Artifact block {block.id} cannot be empty")
+            if not _has_alphanumeric_text(block.title) or not _has_alphanumeric_text(
+                block.content
+            ):
+                raise ValueError(
+                    f"Artifact block {block.id} cannot be empty or contain only punctuation"
+                )
             block_source_ids = {
                 f"{result.request_id}-{index}"
                 for result in tool_results
