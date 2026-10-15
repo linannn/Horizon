@@ -32,6 +32,8 @@ def make_orchestrator() -> HorizonOrchestrator:
     orchestrator = object.__new__(HorizonOrchestrator)
     orchestrator.console = Console(file=StringIO())
     orchestrator.last_fetch_report = None
+    orchestrator.webhook_notifier = None
+    orchestrator.wechat_notifier = None
     return orchestrator
 
 
@@ -113,15 +115,16 @@ def test_partial_failure_keeps_items_and_source_names(monkeypatch) -> None:
     assert source_reports[1]["error"] == "ValueError: unavailable"
 
 
-def test_native_run_raises_when_every_attempted_source_failed(monkeypatch) -> None:
+@pytest.mark.parametrize("channel", ["webhook_notifier", "wechat_notifier"])
+def test_native_run_raises_when_every_attempted_source_failed(monkeypatch, channel) -> None:
     orchestrator = make_orchestrator()
     orchestrator.config = SimpleNamespace(  # type: ignore[assignment]
         email=None,
-        filtering=SimpleNamespace(time_window_hours=24),
+        collection=SimpleNamespace(time_window_hours=24),
     )
     orchestrator.email_manager = None
     send_failure = AsyncMock()
-    orchestrator.webhook_notifier = SimpleNamespace(send_failure=send_failure)  # type: ignore[assignment]
+    setattr(orchestrator, channel, SimpleNamespace(send_failure=send_failure))
     report = FetchReport(
         [
             SourceFetchOutcome("GitHub", "failure", error="RuntimeError: down"),
@@ -145,7 +148,7 @@ def test_native_run_treats_all_success_empty_as_no_content(monkeypatch) -> None:
     orchestrator = make_orchestrator()
     orchestrator.config = SimpleNamespace(  # type: ignore[assignment]
         email=None,
-        filtering=SimpleNamespace(time_window_hours=24),
+        collection=SimpleNamespace(time_window_hours=24),
     )
     orchestrator.email_manager = None
     send_failure = AsyncMock()

@@ -73,6 +73,13 @@ class TwitterPlaywrightScraper(BaseScraper):
             return []
 
         users = [u.strip().lstrip("@") for u in self.twitter_config.users if u.strip()]
+        keywords = [k.strip() for k in self.twitter_config.keywords if k.strip()]
+        if keywords:
+            logger.warning(
+                "Twitter keyword search is not supported in playwright mode; "
+                "skipping keywords %s. Use Apify mode (APIFY_TOKEN) to fetch by keyword.",
+                keywords,
+            )
         if not users:
             logger.debug("No Twitter users configured, skipping.")
             return []
@@ -378,6 +385,7 @@ class TwitterPlaywrightScraper(BaseScraper):
                 content=text,
                 author=username,
                 published_at=published_at,
+                profile=self.twitter_config.profile,
                 metadata={
                     "tweet_id": tweet_id,
                     "is_retweet": tweet.get("is_retweet", False),

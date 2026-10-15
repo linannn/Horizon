@@ -4,7 +4,16 @@ import asyncio
 from datetime import datetime, timezone
 
 from src.ai.summarizer import DailySummarizer
-from src.models import ContentItem, SourceType
+from src.models import (
+    ArtifactSource,
+    ClassificationResult,
+    ContentAnalysis,
+    ContentArtifact,
+    ContentBlock,
+    ContentItem,
+    ProcessingResult,
+    SourceType,
+)
 
 
 def _run_async(coro):
@@ -20,10 +29,34 @@ def _make_item(idx: int) -> ContentItem:
         content="content",
         author="tester",
         published_at=datetime(2026, 4, 25, 8, 0, tzinfo=timezone.utc),
+        profile="tech-news",
+        processing=ProcessingResult(
+            classification=ClassificationResult(
+                profile="tech-news", method="source_override"
+            ),
+            analysis=ContentAnalysis(
+                score=8.0,
+                reason="test",
+                summary=f"Summary for item {idx}.",
+                tags=["AI", "News"],
+            ),
+            artifacts={
+                language: ContentArtifact(
+                    language=language,
+                    title=f"Important Item {idx}",
+                    blocks=[
+                        ContentBlock(
+                            id="summary",
+                            title="Summary",
+                            content=f"Summary for item {idx}.",
+                            primary=True,
+                        )
+                    ],
+                )
+                for language in ("en", "zh")
+            },
+        ),
     )
-    item.ai_score = 8.0
-    item.ai_summary = f"Summary for item {idx}."
-    item.ai_tags = ["AI", "News"]
     return item
 
 
@@ -124,30 +157,201 @@ def test_generate_summary_zh_uses_localized_selection_header_and_numeric_date():
     assert "Apr 25, 08:00" not in result
 
 
-def test_generate_summary_expands_core_and_compacts_watch_items():
-    summarizer = DailySummarizer(core_score_threshold=7.0)
-    core = _make_item(1)
-    watch = _make_item(2)
-    watch.ai_score = 5.0
-    watch.metadata["whats_new_zh"] = "这是值得关注条目的简短更新。"
-    watch.metadata["background_zh"] = "这段背景不应出现在紧凑列表里。"
+def test_generate_summary_groups_items_by_profile_with_heading_hierarchy():
+    news = _make_item(1)
+    blog = _make_item(2)
+    blog.profile = "tech-blog"
+    blog.processing.classification.profile = "tech-blog"
+    summarizer = DailySummarizer(
+        profile_names={
+            "tech-news": {"default": "Technology News", "zh": "科技新闻"},
+            "tech-blog": {"default": "Technology Blog", "zh": "科技博客"},
+        }
+    )
 
     result = _run_async(
         summarizer.generate_summary(
-            [core, watch],
+            [news, blog],
             date="2026-04-25",
-            total_fetched=10,
+            total_fetched=2,
+            language="en",
+        )
+    )
+
+    assert result.count("# Horizon Daily") == 1
+    assert "## Technology News" in result
+    assert "## Technology Blog" in result
+    assert "### [Important Item 1]" in result
+    assert "### [Important Item 2]" in result
+
+
+def test_generate_summary_uses_configured_profile_order():
+    finance = _make_item(1)
+    finance.profile = "finance-news"
+    finance.processing.classification.profile = "finance-news"
+    blog = _make_item(2)
+    blog.profile = "tech-blog"
+    blog.processing.classification.profile = "tech-blog"
+    news = _make_item(3)
+    summarizer = DailySummarizer(
+        profile_names={
+            "tech-news": {"default": "Technology News"},
+            "tech-blog": {"default": "Technology Blog"},
+            "finance-news": {"default": "Financial News"},
+        },
+        profile_order=["tech-news", "tech-blog", "finance-news"],
+    )
+
+    result = _run_async(
+        summarizer.generate_summary(
+            [finance, blog, news],
+            date="2026-04-25",
+            total_fetched=3,
+            language="en",
+        )
+    )
+
+    assert result.index("## Technology News") < result.index("## Technology Blog")
+    assert result.index("## Technology Blog") < result.index("## Financial News")
+
+
+def test_generate_summary_renders_primary_block_before_source_without_heading():
+    item = _make_item(1)
+    item.processing.artifacts["en"] = ContentArtifact(
+        language="en",
+        title="Important Item 1",
+        blocks=[
+            ContentBlock(
+                id="summary",
+                title="Summary",
+                content="Primary explanation.",
+                primary=True,
+            ),
+            ContentBlock(
+                id="background",
+                title="Background",
+                content="Supporting context.",
+            ),
+        ],
+    )
+
+    result = _run_async(
+        DailySummarizer().generate_summary(
+            [item],
+            date="2026-04-25",
+            total_fetched=1,
+            language="en",
+        )
+    )
+
+    assert "#### Summary" not in result
+    assert result.index("Primary explanation.") < result.index(
+        "rss · tester · Apr 25, 08:00"
+    )
+    assert result.index("rss · tester · Apr 25, 08:00") < result.index(
+        "**「Background」** Supporting context."
+    )
+
+
+def test_generate_summary_renders_non_primary_blog_sections_after_source():
+    item = _make_item(1)
+    item.profile = "tech-blog"
+    item.processing.classification.profile = "tech-blog"
+    item.processing.artifacts["en"] = ContentArtifact(
+        language="en",
+        title="A technical article",
+        blocks=[
+            ContentBlock(
+                id="background",
+                title="Background",
+                content="The original constraints.",
+            ),
+            ContentBlock(
+                id="solution",
+                title="Solution",
+                content="The implementation and evidence.",
+            ),
+            ContentBlock(
+                id="takeaway",
+                title="Takeaway",
+                content="The durable lesson.",
+            ),
+        ],
+    )
+
+    result = _run_async(
+        DailySummarizer().generate_summary(
+            [item],
+            date="2026-04-25",
+            total_fetched=1,
+            language="en",
+        )
+    )
+
+    source_index = result.index("rss · tester · Apr 25, 08:00")
+    context_index = result.index("**「Background」** The original constraints.")
+    solution_index = result.index("**「Solution」** The implementation and evidence.")
+    takeaway_index = result.index("**「Takeaway」** The durable lesson.")
+    assert source_index < context_index < solution_index < takeaway_index
+    assert "#### Background" not in result
+
+
+def test_generate_webhook_item_normalizes_existing_zh_artifact_to_simplified():
+    item = _make_item(1)
+    item.processing.artifacts["zh"] = ContentArtifact(
+        language="zh",
+        title="代理工作流更新",
+        blocks=[
+            ContentBlock(
+                id="background",
+                title="背景",
+                content="社群關注這項更新，並分享實際用量數據。",
+            )
+        ],
+    )
+
+    result = DailySummarizer().generate_webhook_item(
+        item,
+        language="zh",
+        index=1,
+        total=1,
+    )
+
+    assert "代理工作流更新" in result
+    assert "**「背景」** 社群关注这项更新，并分享实际用量数据。" in result
+    assert "關注" not in result
+
+
+def test_generate_summary_renumbers_interleaved_profiles_and_localizes_headings():
+    first_news = _make_item(1)
+    blog = _make_item(2)
+    second_news = _make_item(3)
+    blog.profile = "tech-blog"
+    blog.processing.classification.profile = "tech-blog"
+    summarizer = DailySummarizer(
+        profile_names={
+            "tech-news": {"default": "Technology News", "zh": "科技新闻"},
+            "tech-blog": {"default": "Technology Blog", "zh": "科技博客"},
+        }
+    )
+
+    result = _run_async(
+        summarizer.generate_summary(
+            [first_news, blog, second_news],
+            date="2026-04-25",
+            total_fetched=3,
             language="zh",
         )
     )
 
-    assert "**级别**: 核心必看" in result
-    assert "## 更多动态" in result
-    assert "### [Important Item 2](https://example.com/items/2)" in result
-    assert "这是值得关注条目的简短更新。" in result
-    assert "rss · tester · 4月25日 08:00" in result
-    assert "这段背景不应出现在紧凑列表里。" not in result
-    assert "**级别**: 值得关注" not in result
+    assert "## 科技新闻" in result
+    assert "## 科技博客" in result
+    assert "1. [Important Item 1](#item-tech-news-1)" in result
+    assert "2. [Important Item 3](#item-tech-news-2)" in result
+    assert "1. [Important Item 2](#item-tech-blog-1)" in result
+    assert result.index("2. [Important Item 3]") < result.index("1. [Important Item 2]")
+    assert '<a id="item-tech-news-1"></a>' in result
+    assert '<a id="item-tech-blog-1"></a>' in result
 
 
 def test_generate_empty_summary_zh_uses_localized_analyzed_line():
@@ -170,15 +374,41 @@ def test_generate_summary_escapes_untrusted_text_in_all_output_contexts():
     summarizer = DailySummarizer()
     item = _make_item(1)
     item.title = '<script>alert("title")</script> [click](javascript:alert(1))'
-    item.ai_summary = '<img src=x onerror="alert(1)"> **summary**'
+    item.processing.analysis.summary = '<img src=x onerror="alert(1)"> **summary**'
     item.author = '<svg onload="alert(1)">'
-    item.ai_tags = ['tag`](javascript:alert(1))']
+    item.processing.analysis.tags = ['tag`](javascript:alert(1))']
+    item.processing.artifacts["en"] = ContentArtifact(
+        language="en",
+        title=item.title,
+        blocks=[
+            ContentBlock(
+                id="summary",
+                title="Summary",
+                content='<img src=x onerror="alert(1)"> **summary**',
+                primary=True,
+            ),
+            ContentBlock(
+                id="background",
+                title="Background",
+                content='<iframe src="data:text/html,bad"></iframe>',
+            ),
+            ContentBlock(
+                id="community_discussion",
+                title="Discussion",
+                content="[bad](data:text/html,bad)",
+            ),
+        ],
+        sources=[
+            ArtifactSource(
+                id="ref-1",
+                title='<img src=x onerror="alert(1)">',
+                url="https://example.com/ref",
+            )
+        ],
+    )
     item.metadata.update(
         {
             "feed_name": '<b onclick="alert(1)">feed</b>',
-            "background": '<iframe src="data:text/html,bad"></iframe>',
-            "community_discussion": '[bad](data:text/html,bad)',
-            "sources": [{"title": '<img src=x onerror="alert(1)">', "url": "https://example.com/ref"}],
         }
     )
 
@@ -197,16 +427,20 @@ def test_generate_summary_escapes_untrusted_text_in_all_output_contexts():
 def test_generate_summary_rejects_unsafe_urls_and_quote_injection():
     summarizer = DailySummarizer()
     item = _make_item(1)
-    item.metadata.update(
-        {
-            "discussion_url": 'javascript:alert("discussion")',
-            "sources": [
-                {"title": 'Quoted "><script>alert(1)</script>', "url": 'https://example.com/\" onmouseover=\"alert(1)'},
-                {"title": "JavaScript", "url": "javascript:alert(1)"},
-                {"title": "Data", "url": "data:text/html,<script>alert(1)</script>"},
-            ],
-        }
-    )
+    item.metadata["discussion_url"] = 'javascript:alert("discussion")'
+    item.processing.artifacts["en"].sources = [
+        ArtifactSource(
+            id="quoted",
+            title='Quoted "><script>alert(1)</script>',
+            url='https://example.com/\" onmouseover=\"alert(1)',
+        ),
+        ArtifactSource(id="js", title="JavaScript", url="javascript:alert(1)"),
+        ArtifactSource(
+            id="data",
+            title="Data",
+            url="data:text/html,<script>alert(1)</script>",
+        ),
+    ]
 
     result = _run_async(summarizer.generate_summary([item], "2026-04-25", 1))
 
@@ -221,15 +455,75 @@ def test_generate_summary_rejects_unsafe_urls_and_quote_injection():
 def test_generate_summary_preserves_normal_http_links():
     summarizer = DailySummarizer()
     item = _make_item(1)
-    item.metadata.update(
-        {
-            "discussion_url": "https://example.com/discuss?id=1#comments",
-            "sources": [{"title": "Useful reference", "url": "https://docs.example.com/path?q=one&lang=en"}],
-        }
-    )
+    item.metadata["discussion_url"] = "https://example.com/discuss?id=1#comments"
+    item.processing.artifacts["en"].sources = [
+        ArtifactSource(
+            id="useful",
+            title="Useful reference",
+            url="https://docs.example.com/path?q=one&lang=en",
+        )
+    ]
 
     result = _run_async(summarizer.generate_summary([item], "2026-04-25", 1))
 
     assert "[Important Item 1](https://example.com/items/1)" in result
     assert "[Discussion](https://example.com/discuss?id=1#comments)" in result
     assert 'href="https://docs.example.com/path?q=one&amp;lang=en"' in result
+
+
+def test_generate_summary_expands_core_and_compacts_watch_items():
+    summarizer = DailySummarizer(core_score_threshold=7.0)
+    core = _make_item(1)
+    watch = _make_item(2)
+    watch.processing.analysis.score = 5.0
+    watch.processing.artifacts["zh"].blocks[0].content = "这是值得关注条目的简短更新。"
+    watch.processing.artifacts["zh"].blocks.append(ContentBlock(
+        id="background", title="Background", content="这段背景不应出现在紧凑列表里。"
+    ))
+
+    result = _run_async(
+        summarizer.generate_summary(
+            [core, watch],
+            date="2026-04-25",
+            total_fetched=10,
+            language="zh",
+        )
+    )
+
+    assert "**级别**: 核心必看" in result
+    assert "### 更多动态" in result
+    assert "#### [Important Item 2](https://example.com/items/2)" in result
+    assert "这是值得关注条目的简短更新。" in result
+    assert "rss · tester · 4月25日 08:00" in result
+    assert "这段背景不应出现在紧凑列表里。" not in result
+    assert "**级别**: 值得关注" not in result
+
+
+
+def test_compact_items_escape_artifacts_and_retain_profile_anchors():
+    item = _make_item(1)
+    item.processing.analysis.score = 4.0
+    artifact = item.processing.artifacts["en"]
+    artifact.title = "<script>bad</script> [title]"
+    artifact.blocks[0].content = "<img src=x> **bold**"
+    artifact.blocks.append(ContentBlock(id="extra", title="Extra", content="hidden detail"))
+    item.metadata["discussion_url"] = "javascript:alert(1)"
+    result = _run_async(DailySummarizer().generate_summary([item], "2026-04-25", 1))
+    assert 'id="item-tech-news-1"' in result
+    assert "(#item-tech-news-1)" in result
+    assert "&lt;script&gt;" in result
+    assert "&lt;img src=x&gt;" in result
+    assert "<script>" not in result
+    assert "javascript:" not in result
+    assert "hidden detail" not in result
+
+
+def test_unscored_profile_preserves_full_artifact():
+    item = _make_item(1)
+    item.processing.analysis.score = None
+    item.processing.artifacts["en"].blocks.append(ContentBlock(
+        id="details", title="Details", content="Unscored profile details."
+    ))
+    result = _run_async(DailySummarizer().generate_summary([item], "2026-04-25", 1))
+    assert "Unscored profile details." in result
+    assert "More Updates" not in result

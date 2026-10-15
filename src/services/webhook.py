@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+from rich.console import Console
 from dataclasses import asdict, dataclass
 from enum import Enum
 from urllib.parse import urlsplit, urlunsplit
@@ -12,6 +13,7 @@ from typing import Any, List, Optional, Union, cast
 import httpx
 
 from ..ai.markdown_utils import clean_app_summary_markdown
+from ..console_icons import get_icons
 from ..models import ContentItem, WebhookConfig
 from ..ai.summarizer import DailySummarizer
 from ..url_security import UnsafeURLError, safe_request, validate_http_url
@@ -248,22 +250,10 @@ def redact_headers(headers: dict[str, str]) -> dict[str, str]:
 class WebhookNotifier:
     """Sends webhook notifications after pipeline completion or failure."""
 
-    def __init__(self, config: WebhookConfig, console=None):
+    def __init__(self, config: WebhookConfig, console=None, icons=None):
         self.config = config
-        if console is None:
-            try:
-                from rich.console import Console
-
-                self.console = Console()
-            except ImportError:
-
-                class DummyConsole:
-                    def print(self, *args, **kwargs):
-                        print(*args, **kwargs)
-
-                self.console = DummyConsole()
-        else:
-            self.console = console
+        self.console = console if console is not None else Console(stderr=True)
+        self.icons = icons if icons is not None else get_icons()
         self.url = None
         self._validate_config()  # sets self.url or raises ValueError
 
@@ -406,22 +396,30 @@ class WebhookNotifier:
         )
         elements: list[dict[str, Any]] = [_markdown(overview)]
 
-        for item_index, item in enumerate(important_items, start=1):
-            title = str(item.metadata.get(f"title_{lang}") or item.title)
-            score = item.ai_score or "?"
-            panel_title = f"{item_index}. {title} ⭐️ {score}/10"
-            item_content = summarizer.generate_webhook_item(
-                item,
-                language=lang,
-                index=item_index,
-                total=len(important_items),
-            )
-            elements.append(
-                _collapsible_panel(
-                    panel_title,
-                    _format_markdown_for_webhook(item_content),
+        view = summarizer.build_view(important_items, lang)
+        for group in view.groups:
+            elements.append(_markdown(f"## {group.name}"))
+            for view_item in group.items:
+                score_suffix = (
+                    f" ⭐️ {view_item.score}/10"
+                    if view_item.score != "?"
+                    else ""
                 )
-            )
+                panel_title = f"{view_item.index}. {view_item.title}{score_suffix}"
+                item_content = summarizer.generate_webhook_item(
+                    view_item.item,
+                    language=lang,
+                    index=view_item.index,
+                    total=view_item.group_count,
+                    title=view_item.title,
+                    score=view_item.score,
+                )
+                elements.append(
+                    _collapsible_panel(
+                        panel_title,
+                        _format_markdown_for_webhook(item_content),
+                    )
+                )
 
         return {
             "msg_type": "interactive",
@@ -525,27 +523,39 @@ class WebhookNotifier:
                 "message_kind": "overview",
                 "summary": overview,
             }
-            for item_index, item in enumerate(important_items, start=1):
-                title = str(item.metadata.get(f"title_{lang}") or item.title)
-                item_summary = summarizer.generate_webhook_item(
-                    item,
-                    language=lang,
-                    index=item_index,
-                    total=len(important_items),
-                )
-                item_messages.append(
-                    {
-                        **base_vars,
-                        "message_title": f"{item_index}/{len(important_items)} {title}",
-                        "message_kind": "item",
-                        "item_index": item_index,
-                        "item_count": len(important_items),
-                        "item_title": title,
-                        "item_url": str(item.url),
-                        "item_score": item.ai_score or "",
-                        "summary": item_summary,
-                    }
-                )
+            view = summarizer.build_view(important_items, lang)
+            for group in view.groups:
+                for view_item in group.items:
+                    item_summary = summarizer.generate_webhook_item(
+                        view_item.item,
+                        language=lang,
+                        index=view_item.index,
+                        total=view_item.group_count,
+                        title=view_item.title,
+                        score=view_item.score,
+                    )
+                    item_messages.append(
+                        {
+                            **base_vars,
+                            "message_title": (
+                                f"{group.name} {view_item.index}/"
+                                f"{view_item.group_count} {view_item.title}"
+                            ),
+                            "message_kind": "item",
+                            "item_index": view_item.global_index,
+                            "item_count": view.item_count,
+                            "profile_item_index": view_item.index,
+                            "profile_item_count": view_item.group_count,
+                            "item_profile": group.profile_id,
+                            "item_profile_name": group.name,
+                            "item_title": view_item.title,
+                            "item_url": str(view_item.item.url),
+                            "item_score": (
+                                view_item.score if view_item.score != "?" else ""
+                            ),
+                            "summary": item_summary,
+                        }
+                    )
 
             if getattr(self.config, "overview_position", "first") == "last":
                 return list(reversed(item_messages)) + [overview_message]
@@ -802,12 +812,14 @@ class WebhookNotifier:
         )
         if not messages:
             self.console.print(
-                f"🔕 Skipping {lang.upper()} webhook notification "
+                f"{self.icons['webhook_skip']} Skipping {lang.upper()} webhook notification "
                 f"(filtered by webhook.languages)"
             )
             return
 
-        self.console.print(f"🔔 Sending {lang.upper()} webhook notification...")
+        self.console.print(
+            f"{self.icons['webhook']} Sending {lang.upper()} webhook notification..."
+        )
         for message in messages:
             await self.notify(message)
 
@@ -822,7 +834,9 @@ class WebhookNotifier:
             date: Date string (YYYY-MM-DD)
             error_message: Description of the failure
         """
-        self.console.print("🔔 Sending webhook failure notification...")
+        self.console.print(
+            f"{self.icons['webhook']} Sending webhook failure notification..."
+        )
         await self.notify(
             {
                 "date": date,

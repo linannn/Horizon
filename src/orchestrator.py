@@ -5,15 +5,18 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Dict, List, Literal, Optional
 from urllib.parse import unquote_plus, urlsplit
 import httpx
 from rich.console import Console
 
+from .console_icons import get_icons
 from .models import Config, ContentItem, SourceType
 from .storage.manager import StorageManager, safe_output_path
 from .services.email import EmailManager
 from .services.webhook import WebhookNotifier
+from .services.wechat import WeChatNotifier
 from .scrapers.github import GitHubScraper
 from .scrapers.hackernews import HackerNewsScraper
 from .scrapers.rss import RSSScraper
@@ -28,8 +31,10 @@ from .scrapers.google_news import GoogleNewsScraper
 from .ai.client import create_ai_client
 from .ai.analyzer import ContentAnalyzer
 from .ai.summarizer import DailySummarizer
-from .ai.enricher import ContentEnricher
+from .ai.enricher import ContentEnricher, EnrichmentBatchResult
 from .ai.tokens import get_usage_snapshot
+from .processing import ProfileRegistry
+from .processing.tools import ToolRegistry
 
 
 _TRACKING_QUERY_PARAMETERS = {
@@ -141,6 +146,7 @@ class FilteringPipelineResult:
     topic_dedup_count: int
     topic_dedup_removed: int
     balanced_digest: BalancedDigestResult
+    eligible_count: Optional[int] = None
 
 
 @dataclass
@@ -210,20 +216,56 @@ class FetchReport:
 class HorizonOrchestrator:
     """Orchestrates the complete workflow for content aggregation and analysis."""
 
-    def __init__(self, config: Config, storage: StorageManager):
+    icons = get_icons()
+
+    def __init__(
+        self,
+        config: Config,
+        storage: StorageManager,
+        console: Optional[Console] = None,
+        profiles: Optional[ProfileRegistry] = None,
+    ):
         """Initialize orchestrator.
 
         Args:
             config: Application configuration
             storage: Storage manager
+            console: Shared Rich Console instance
         """
         self.config = config
         self.storage = storage
-        self.console = Console()
+        self.console = console or Console(stderr=True)
+        self.icons = get_icons(config.display.icon_style)
+        self.profiles = profiles or ProfileRegistry.load(
+            Path(config.processing.profiles_dir), config.processing.default_profile
+        )
+        self.profiles.validate_source_references(
+            config.sources.model_dump(mode="json")
+        )
+        for profile_id in config.processing.profile_settings:
+            self.profiles.get(profile_id)
+        if config.digest.profile_order:
+            configured_profiles = set(config.digest.profile_order)
+            unknown_profiles = configured_profiles - self.profiles.ids
+            if unknown_profiles:
+                raise ValueError(
+                    "digest.profile_order contains unknown profiles "
+                    f"({', '.join(sorted(unknown_profiles))})"
+                )
+            config.digest.profile_order.extend(
+                profile.id
+                for profile in self.profiles.profiles
+                if profile.id not in configured_profiles
+            )
         self.email_manager = EmailManager(config.email, console=self.console) if config.email else None
         self.webhook_notifier = (
-            WebhookNotifier(config.webhook, console=self.console)
+            WebhookNotifier(config.webhook, console=self.console, icons=self.icons)
             if config.webhook and config.webhook.enabled
+            else None
+        )
+        self.wechat_notifier = (
+            WeChatNotifier(config.wechat, self.storage, console=self.console, icons=self.icons)
+            if config.wechat and config.wechat.enabled
             else None
         )
         self.last_fetch_report: Optional[FetchReport] = None
@@ -234,7 +276,9 @@ class HorizonOrchestrator:
         Args:
             force_hours: Optional override for time window in hours
         """
-        self.console.print("[bold cyan]🌅 Horizon - Starting aggregation...[/bold cyan]\n")
+        self.console.print(
+            f"[bold cyan]{self.icons['start']} Horizon - Starting aggregation...[/bold cyan]\n"
+        )
 
         # Check email subscriptions if configured
         if (
@@ -243,17 +287,22 @@ class HorizonOrchestrator:
             and self.config.email.enabled
             and self.config.email.imap_enabled
         ):
-            self.console.print("📧 Checking for new email subscriptions...")
+            self.console.print(f"{self.icons['email']} Checking for new email subscriptions...")
             self.email_manager.check_subscriptions(self.storage)
 
         try:
             # 1. Determine time window
             since = self._determine_time_window(force_hours)
-            self.console.print(f"📅 Fetching content since: {since.strftime('%Y-%m-%d %H:%M:%S')}\n")
+            self.console.print(
+                f"{self.icons['date']} Fetching content since: "
+                f"{since.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            )
 
             # 2. Fetch content from all sources
             all_items = await self.fetch_all_sources(since)
-            self.console.print(f"📥 Fetched {len(all_items)} items from all sources\n")
+            self.console.print(
+                f"{self.icons['fetched']} Fetched {len(all_items)} items from all sources\n"
+            )
 
             if self.last_fetch_report and self.last_fetch_report.all_failed:
                 raise RuntimeError(self.last_fetch_report.failure_message())
@@ -266,26 +315,22 @@ class HorizonOrchestrator:
             merged_items = self.merge_cross_source_duplicates(all_items)
             if len(merged_items) < len(all_items):
                 self.console.print(
-                    f"🔗 Merged {len(all_items) - len(merged_items)} cross-source duplicates "
+                    f"{self.icons['merge']} Merged "
+                    f"{len(all_items) - len(merged_items)} cross-source duplicates "
                     f"→ {len(merged_items)} unique items\n"
                 )
 
             # 4. Analyze with AI
-            analyzed_items = await self._analyze_content(merged_items)
-            self.console.print(f"🤖 Analyzed {len(analyzed_items)} items with AI\n")
+            analyzed_items = await self.analyze_items(merged_items)
+            self.console.print(
+                f"{self.icons['ai']} Analyzed {len(analyzed_items)} items with AI\n"
+            )
 
             # 5. Filter, deduplicate, and balance the digest
-            filtering_result = await self.filter_items(
+            filtering_result = await self.select_digest_items(
                 analyzed_items,
-                apply_balance=False,
             )
             important_items = filtering_result.items
-
-            # 5.5 Optional second-stage Twitter reply expansion + targeted re-analysis
-            await self._expand_twitter_discussion(important_items)
-
-            # 5.6 Apply digest limits after any targeted re-analysis changes scores.
-            important_items = self.apply_balanced_digest(important_items).items
 
             # Show per-sub-source selection breakdown
             selected_counts: Dict[str, int] = defaultdict(int)
@@ -293,23 +338,27 @@ class HorizonOrchestrator:
                 key = f"{item.source_type.value}/{self._sub_source_label(item)}"
                 selected_counts[key] += 1
             for source_key, count in sorted(selected_counts.items()):
-                self.console.print(f"      • {source_key}: {count}")
+                self.console.print(f"      {self.icons['detail']} {source_key}: {count}")
             self.console.print("")
 
             # 6. Search related stories + enrich with background knowledge (2nd AI pass)
-            await self._enrich_important_items(important_items)
+            await self.enrich_items(important_items)
 
             # 7. Generate and save daily summaries for each configured language
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             for lang in self.config.ai.languages:
                 summarizer = DailySummarizer(
-                    core_score_threshold=self.config.filtering.core_score_threshold
+                    profile_names=self.profiles.names,
+                    profile_order=self.config.digest.profile_order,
+                    core_score_threshold=self.config.digest.core_score_threshold,
                 )
                 summary = await summarizer.generate_summary(important_items, today, len(all_items), language=lang)
 
                 # Save to data/summaries/
                 summary_path = self.storage.save_daily_summary(today, summary, language=lang)
-                self.console.print(f"💾 Saved {lang.upper()} summary to: {summary_path}\n")
+                self.console.print(
+                    f"{self.icons['save']} Saved {lang.upper()} summary to: {summary_path}\n"
+                )
 
                 # Copy to docs/ for GitHub Pages
                 try:
@@ -335,13 +384,21 @@ class HorizonOrchestrator:
                     with open(dest_path, "w", encoding="utf-8") as f:
                         f.write(front_matter + summary_content)
 
-                    self.console.print(f"📄 Copied {lang.upper()} summary to GitHub Pages: {dest_path}\n")
+                    self.console.print(
+                        f"{self.icons['document']} Copied {lang.upper()} summary "
+                        f"to GitHub Pages: {dest_path}\n"
+                    )
                 except Exception as e:
-                    self.console.print(f"[yellow]⚠️  Failed to copy {lang.upper()} summary to docs/: {e}[/yellow]\n")
+                    self.console.print(
+                        f"[yellow]{self.icons['warning']} Failed to copy "
+                        f"{lang.upper()} summary to docs/: {e}[/yellow]\n"
+                    )
 
                 # Send email if configured
                 if self.email_manager and self.config.email and self.config.email.enabled:
-                    self.console.print(f"📧 Sending {lang.upper()} email summary...")
+                    self.console.print(
+                        f"{self.icons['email']} Sending {lang.upper()} email summary..."
+                    )
                     subscribers = self.storage.load_subscribers()
                     subject = f"Horizon Summary ({lang.upper()}) - {today}"
                     self.email_manager.send_daily_summary(summary, subject, subscribers)
@@ -356,12 +413,17 @@ class HorizonOrchestrator:
                         lang=lang,
                         summarizer=summarizer,
                     )
+                if self.wechat_notifier:
+                    await self.wechat_notifier.send_daily_summary(summary, lang)
 
-            self.console.print("[bold green]✅ Horizon completed successfully![/bold green]")
+            self.console.print(
+                f"[bold green]{self.icons['success']} "
+                "Horizon completed successfully![/bold green]"
+            )
             usage = get_usage_snapshot()
             if usage.total_tokens > 0:
                 self.console.print(
-                    f"\n🧮 Token usage this run: "
+                    f"\n{self.icons['tokens']} Token usage this run: "
                     f"{usage.total_tokens} tokens "
                     f"(input: {usage.total_input_tokens}, output: {usage.total_output_tokens})"
                 )
@@ -369,16 +431,23 @@ class HorizonOrchestrator:
                     if u.total <= 0:
                         continue
                     self.console.print(
-                        f"   • {provider}: {u.total} tokens "
+                        f"   {self.icons['detail']} {provider}: {u.total} tokens "
                         f"(in: {u.input_tokens}, out: {u.output_tokens})"
                     )
 
         except Exception as e:
-            self.console.print(f"[bold red]❌ Error: {e}[/bold red]")
+            self.console.print(
+                f"[bold red]{self.icons['error']} Error: {e}[/bold red]"
+            )
 
             # Send webhook failure notification if configured
             if self.webhook_notifier:
                 await self.webhook_notifier.send_failure(
+                    date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    error_message=str(e),
+                )
+            if self.wechat_notifier:
+                await self.wechat_notifier.send_failure(
                     date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
                     error_message=str(e),
                 )
@@ -389,7 +458,7 @@ class HorizonOrchestrator:
         if force_hours:
             since = datetime.now(timezone.utc) - timedelta(hours=force_hours)
         else:
-            hours = self.config.filtering.time_window_hours
+            hours = self.config.collection.time_window_hours
             since = datetime.now(timezone.utc) - timedelta(hours=hours)
         return since
 
@@ -491,7 +560,7 @@ class HorizonOrchestrator:
         Returns:
             SourceFetchOutcome: Named fetch result and diagnostics
         """
-        self.console.print(f"🔍 Fetching from {name}...")
+        self.console.print(f"{self.icons['fetch']} Fetching from {name}...")
         try:
             items = await scraper.fetch(since)
         except Exception as exc:
@@ -511,7 +580,7 @@ class HorizonOrchestrator:
             sub_counts[self._sub_source_label(item)] += 1
         if len(sub_counts) > 1:
             for sub, count in sorted(sub_counts.items()):
-                self.console.print(f"      • {sub}: {count}")
+                self.console.print(f"      {self.icons['detail']} {sub}: {count}")
 
         return SourceFetchOutcome(
             source_name=name,
@@ -561,9 +630,15 @@ class HorizonOrchestrator:
             List[ContentItem]: Deduplicated items
         """
         # Group by normalized URL
-        url_groups: Dict[tuple[str, str, str, str, Optional[int], str, str], List[ContentItem]] = {}
+        url_groups: Dict[tuple[object, ...], List[ContentItem]] = {}
         for item in items:
-            key = _deduplication_url_key(str(item.url))
+            if isinstance(item.profile, list):
+                requested_profile: object = tuple(
+                    profile_id.strip() for profile_id in item.profile
+                )
+            else:
+                requested_profile = (item.profile or "auto").strip() or "auto"
+            key = (*_deduplication_url_key(str(item.url)), requested_profile)
             url_groups.setdefault(key, []).append(item)
 
         merged = []
@@ -608,7 +683,7 @@ class HorizonOrchestrator:
 
         Sends item titles, sources, URLs, excerpts, tags, and summaries to AI
         in a single call.
-        Items must already be sorted by ai_score descending so that the first
+        Items must already be sorted by analysis score descending so that the first
         item in each duplicate group is always the highest-scored one.
         Content (comments) from duplicate items is merged into the primary.
 
@@ -618,14 +693,15 @@ class HorizonOrchestrator:
         if len(release_deduped_items) <= 1:
             return release_deduped_items
 
-        from .ai.prompts import TOPIC_DEDUP_SYSTEM, TOPIC_DEDUP_USER
+        from .ai.prompting.deduplication import TOPIC_DEDUP_SYSTEM, TOPIC_DEDUP_USER
         from .ai.utils import parse_json_response
 
         # Build the item list for the prompt
         lines = []
         for i, item in enumerate(release_deduped_items):
-            tags = ", ".join(item.ai_tags) if item.ai_tags else "—"
-            summary = item.ai_summary or "—"
+            analysis = item.processing.analysis if item.processing else None
+            tags = ", ".join(analysis.tags) if analysis and analysis.tags else "—"
+            summary = analysis.summary if analysis else "—"
             content = (item.content or "").split("--- Top Comments ---", 1)[0]
             excerpt = " ".join(content.split())[:500] or "—"
             source = f"{item.source_type.value}:{self._sub_source_label(item)}"
@@ -750,144 +826,158 @@ class HorizonOrchestrator:
         apply_balance: bool = True,
         log: bool = True,
     ) -> FilteringPipelineResult:
-        """Apply score thresholding, optional topic dedup, and digest balancing."""
-        effective_threshold = (
-            threshold
-            if threshold is not None
-            else self.config.filtering.ai_score_threshold
-        )
-        focus_required = bool(self.config.filtering.focus_topics)
-        focus_items = [
-            item
-            for item in items
-            if not focus_required or item.ai_focus_relevant is True
-        ]
-        focus_relevance_removed = len(items) - len(focus_items)
-
+        """Apply profile gates, optional topic dedup, and digest balancing."""
+        focus_items = [item for item in items if self._passes_focus_gate(item)]
         substantive_items = [
-            item
-            for item in focus_items
-            if not focus_required or item.ai_substantive is True
+            item for item in focus_items
+            if self._passes_focus_gate(item, substantive=True)
         ]
-        substantive_removed = len(focus_items) - len(substantive_items)
-
         threshold_items = [
-            item
-            for item in substantive_items
-            if item.ai_score is not None and item.ai_score >= effective_threshold
+            item for item in substantive_items
+            if self.passes_profile_filter(item, threshold)
         ]
-        threshold_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
-
-        watch_score_threshold = self.config.filtering.watch_score_threshold
-        max_watch_items = self.config.filtering.max_watch_items or 0
-        watch_eligible_items: List[ContentItem] = []
-        if (
-            focus_required
-            and watch_score_threshold is not None
-            and watch_score_threshold < effective_threshold
-            and max_watch_items > 0
-        ):
-            watch_eligible_items = [
-                item
-                for item in focus_items
-                if item.ai_score is not None
-                and watch_score_threshold <= item.ai_score < effective_threshold
-            ]
-            watch_eligible_items.sort(
-                key=lambda item: item.ai_score or 0,
-                reverse=True,
-            )
-
-        candidate_items = [*threshold_items, *watch_eligible_items]
-        candidate_items.sort(key=lambda item: item.ai_score or 0, reverse=True)
-
+        watch_eligible_items = [
+            item for item in focus_items if self._is_watch_item(item, threshold)
+        ]
+        candidate_items = sorted(
+            [*threshold_items, *watch_eligible_items],
+            key=self._item_score,
+            reverse=True,
+        )
         if log:
-            if focus_required:
-                self.console.print(
-                    f"🎯 {len(focus_items)}/{len(items)} items directly match Reader Focus "
-                    f"({focus_relevance_removed} removed)"
-                )
-                self.console.print(
-                    f"🧱 {len(substantive_items)}/{len(focus_items)} focus items contain "
-                    f"substantive value ({substantive_removed} removed)"
-                )
             self.console.print(
-                f"⭐️ {len(threshold_items)} items scored ≥ {effective_threshold}\n"
+                f"{self.icons['filter']} Selected {len(threshold_items)} items "
+                f"with profile filters; {len(watch_eligible_items)} watch candidates\n"
             )
-            if watch_score_threshold is not None and max_watch_items > 0:
+            counts = [self._category_counts(stage) for stage in (
+                items, focus_items, substantive_items, threshold_items, watch_eligible_items
+            )]
+            for category in sorted(counts[0]):
                 self.console.print(
-                    f"👀 {len(watch_eligible_items)} lower-priority focus items eligible "
-                    f"for More Updates (score ≥ {watch_score_threshold}; "
-                    f"max {max_watch_items})\n"
+                    f"      {self.icons['detail']} {category}: analyzed {counts[0][category]} "
+                    f"→ focus {counts[1].get(category, 0)} "
+                    f"→ substantive {counts[2].get(category, 0)} "
+                    f"→ score {counts[3].get(category, 0)} "
+                    f"→ watch {counts[4].get(category, 0)}"
                 )
-            analyzed_counts = self._category_counts(items)
-            focus_counts = self._category_counts(focus_items)
-            substantive_counts = self._category_counts(substantive_items)
-            threshold_counts = self._category_counts(threshold_items)
-            watch_counts = self._category_counts(watch_eligible_items)
-            for category in sorted(analyzed_counts):
-                self.console.print(
-                    f"      • {category}: analyzed {analyzed_counts[category]} "
-                    f"→ focus {focus_counts.get(category, 0)} "
-                    f"→ substantive {substantive_counts.get(category, 0)} "
-                    f"→ score {threshold_counts.get(category, 0)} "
-                    f"→ watch {watch_counts.get(category, 0)}"
-                )
-            self.console.print("")
 
         deduped_items = candidate_items
         if topic_dedup and deduped_items:
-            deduped_items = await self.merge_topic_duplicates(deduped_items, log=log)
+            profile_groups: Dict[str, List[ContentItem]] = defaultdict(list)
+            for item in deduped_items:
+                profile_groups[item.processing.classification.profile].append(item)
+            deduped_items = []
+            for profile_id, profile_items in profile_groups.items():
+                settings = self.config.processing.profile_settings.get(profile_id)
+                if settings is None or settings.topic_dedup:
+                    deduped_items.extend(
+                        await self.merge_topic_duplicates(profile_items, log=log)
+                    )
+                else:
+                    deduped_items.extend(profile_items)
+            deduped_items.sort(key=self._item_score, reverse=True)
         topic_dedup_removed = len(candidate_items) - len(deduped_items)
-
         if log and topic_dedup_removed:
             self.console.print(
-                f"🧹 Removed {topic_dedup_removed} topic duplicates "
+                f"{self.icons['cleanup']} Removed {topic_dedup_removed} topic duplicates "
                 f"→ {len(deduped_items)} unique items\n"
             )
 
         watch_selected = 0
-        capped_items: List[ContentItem] = []
+        capped_items = []
         for item in deduped_items:
-            is_primary = (
-                item.ai_score is not None
-                and item.ai_score >= effective_threshold
-                and (not focus_required or item.ai_substantive is True)
-            )
-            if is_primary:
+            if self.passes_profile_filter(item, threshold):
                 capped_items.append(item)
-            elif watch_selected < max_watch_items:
+            elif watch_selected < self.config.digest.max_watch_items:
                 capped_items.append(item)
                 watch_selected += 1
-
-        balanced_digest = (
+        balanced = (
             self.apply_balanced_digest(capped_items, log=log)
-            if apply_balance
-            else BalancedDigestResult(items=capped_items)
+            if apply_balance else BalancedDigestResult(items=capped_items)
         )
-        final_watch_count = sum(
-            1
-            for item in balanced_digest.items
-            if item.ai_score is not None and item.ai_score < effective_threshold
-        )
-        if log and watch_score_threshold is not None and max_watch_items > 0:
-            self.console.print(
-                f"👀 Added {final_watch_count} lower-priority focus items "
-                f"to More Updates (max {max_watch_items})\n"
-            )
         return FilteringPipelineResult(
-            items=balanced_digest.items,
+            items=balanced.items,
             focus_relevance_count=len(focus_items),
-            focus_relevance_removed=focus_relevance_removed,
+            focus_relevance_removed=len(items) - len(focus_items),
             substantive_count=len(substantive_items),
-            substantive_removed=substantive_removed,
+            substantive_removed=len(focus_items) - len(substantive_items),
             threshold_count=len(threshold_items),
             watch_eligible_count=len(watch_eligible_items),
-            watch_selected_count=final_watch_count,
+            watch_selected_count=sum(self._is_watch_item(item, threshold) for item in balanced.items),
             topic_dedup_count=len(deduped_items),
             topic_dedup_removed=topic_dedup_removed,
-            balanced_digest=balanced_digest,
+            balanced_digest=balanced,
         )
+
+    async def select_digest_items(
+        self,
+        items: List[ContentItem],
+        *,
+        threshold: Optional[float] = None,
+        topic_dedup: bool = True,
+        log: bool = True,
+    ) -> FilteringPipelineResult:
+        """Select final digest items using the same stages for every entry point."""
+        initial = await self.filter_items(
+            items, threshold=threshold, topic_dedup=topic_dedup,
+            apply_balance=False, log=log,
+        )
+        await self._expand_twitter_discussion(initial.items)
+        # Re-analysis can change relevance and score; reapply all selection gates.
+        final = await self.filter_items(
+            initial.items, threshold=threshold, topic_dedup=False,
+            apply_balance=False, log=False,
+        )
+        initial.eligible_count = len(final.items)
+        initial.balanced_digest = self.apply_balanced_digest(final.items, log=log)
+        initial.items = initial.balanced_digest.items
+        initial.watch_selected_count = sum(
+            self._is_watch_item(item, threshold) for item in initial.items
+        )
+        return initial
+
+    @staticmethod
+    def _item_score(item: ContentItem) -> float:
+        analysis = item.processing.analysis if item.processing else None
+        return analysis.score if analysis and analysis.score is not None else -1
+
+    def _passes_focus_gate(self, item: ContentItem, *, substantive: bool = False) -> bool:
+        if not item.processing or not item.processing.analysis:
+            return False
+        settings = self.config.processing.profile_settings.get(item.processing.classification.profile)
+        if settings is None or not settings.focus_topics:
+            return True
+        analysis = item.processing.analysis
+        return analysis.focus_relevant is True and (not substantive or analysis.substantive is True)
+
+    def _is_watch_item(self, item: ContentItem, threshold: Optional[float] = None) -> bool:
+        if not self._passes_focus_gate(item) or not self.config.digest.max_watch_items:
+            return False
+        settings = self.config.processing.profile_settings.get(item.processing.classification.profile)
+        if settings is None or not settings.focus_topics or settings.watch_score_threshold is None:
+            return False
+        effective_threshold = threshold if threshold is not None else settings.threshold
+        score = item.processing.analysis.score
+        return (
+            effective_threshold is not None and score is not None
+            and settings.watch_score_threshold <= score < effective_threshold
+        )
+
+    def passes_profile_filter(
+        self,
+        item: ContentItem,
+        threshold: Optional[float] = None,
+    ) -> bool:
+        if not self._passes_focus_gate(item, substantive=True):
+            return False
+        settings = self.config.processing.profile_settings.get(item.processing.classification.profile)
+        effective_threshold = threshold
+        if effective_threshold is None and settings is not None:
+            effective_threshold = settings.threshold
+        if effective_threshold is None:
+            return True
+        score = item.processing.analysis.score
+        return score is not None and score >= effective_threshold
 
     def apply_balanced_digest(
         self,
@@ -901,19 +991,15 @@ class HorizonOrchestrator:
         appears in more than one configured group, the first group in config
         order wins.
         """
-        filtering = self.config.filtering
-        groups = filtering.category_groups
-        max_items = filtering.max_items
-        max_items_per_source = filtering.max_items_per_source
+        digest = self.config.digest
+        groups = digest.category_groups
+        max_items = digest.max_items
+        max_items_per_source = digest.max_items_per_source
 
         if not groups and max_items is None and max_items_per_source is None:
             return BalancedDigestResult(items=items)
 
-        sorted_items = sorted(
-            items,
-            key=lambda item: item.ai_score or 0,
-            reverse=True,
-        )
+        sorted_items = sorted(items, key=self._item_score, reverse=True)
 
         source_limit_removed = 0
         if max_items_per_source is not None:
@@ -949,7 +1035,7 @@ class HorizonOrchestrator:
         selected: List[tuple[ContentItem, str]] = []
         overflow: List[tuple[ContentItem, str]] = []
         group_counts: Dict[str, int] = defaultdict(int)
-        default_group = filtering.default_group
+        default_group = digest.default_group
 
         for item in sorted_items:
             category = item.metadata.get("category")
@@ -962,7 +1048,7 @@ class HorizonOrchestrator:
             if group_key in groups:
                 limit = groups[group_key].limit
             else:
-                limit = filtering.default_group_limit
+                limit = digest.default_group_limit
 
             if limit is not None and group_counts[group_key] >= limit:
                 overflow.append((item, group_key))
@@ -974,7 +1060,7 @@ class HorizonOrchestrator:
         backfill_count = 0
         if max_items is not None:
             selected = selected[:max_items]
-            if filtering.fill_remaining_slots and len(selected) < max_items:
+            if digest.fill_remaining_slots and len(selected) < max_items:
                 eligible_overflow = [
                     entry
                     for entry in overflow
@@ -984,7 +1070,7 @@ class HorizonOrchestrator:
                 selected.extend(backfilled)
                 backfill_count = len(backfilled)
                 selected.sort(
-                    key=lambda entry: entry[0].ai_score or 0,
+                    key=lambda entry: self._item_score(entry[0]),
                     reverse=True,
                 )
 
@@ -995,11 +1081,12 @@ class HorizonOrchestrator:
         group_limits: Dict[str, Optional[int]] = {
             group_key: group.limit for group_key, group in groups.items()
         }
-        group_limits.setdefault(default_group, filtering.default_group_limit)
+        group_limits.setdefault(default_group, digest.default_group_limit)
 
         if log:
             self.console.print(
-                f"⚖️ Balanced digest selected {len(selected)}/{len(items)} items"
+                f"{self.icons['balance']} Balanced digest selected "
+                f"{len(selected)}/{len(items)} items"
             )
             if source_limit_removed:
                 self.console.print(
@@ -1013,19 +1100,20 @@ class HorizonOrchestrator:
             for group_key, group in groups.items():
                 label = group.name or group_key
                 self.console.print(
-                    f"      • {label}: {final_counts.get(group_key, 0)}/{group.limit}"
+                    f"      {self.icons['detail']} {label}: "
+                    f"{final_counts.get(group_key, 0)}/{group.limit}"
                 )
             if (
                 final_counts.get(default_group, 0)
-                or filtering.default_group_limit is not None
+                or digest.default_group_limit is not None
             ):
                 limit_label = (
-                    str(filtering.default_group_limit)
-                    if filtering.default_group_limit is not None
+                    str(digest.default_group_limit)
+                    if digest.default_group_limit is not None
                     else "unlimited"
                 )
                 self.console.print(
-                    f"      • {default_group}: "
+                    f"      {self.icons['detail']} {default_group}: "
                     f"{final_counts.get(default_group, 0)}/{limit_label}"
                 )
             self.console.print("")
@@ -1070,7 +1158,8 @@ class HorizonOrchestrator:
             return
 
         self.console.print(
-            f"💬 Fetching reply text for {len(twitter_items)} Twitter items..."
+            f"{self.icons['discussion']} Fetching reply text for "
+            f"{len(twitter_items)} Twitter items..."
         )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1087,11 +1176,13 @@ class HorizonOrchestrator:
                     if TwitterScraper.append_discussion_content(item, reply_lines):
                         expanded.append(item)
                         self.console.print(
-                            f"   💬 {len(reply_lines)} replies added to: {item.title[:60]}"
+                            f"   {self.icons['discussion']} {len(reply_lines)} replies "
+                            f"added to: {item.title[:60]}"
                         )
                 except Exception as exc:
                     self.console.print(
-                        f"   [yellow]⚠️  Reply fetch failed for {item.id}: {exc}[/yellow]"
+                        f"   [yellow]{self.icons['warning']} Reply fetch failed for "
+                        f"{item.id}: {exc}[/yellow]"
                     )
 
         if not expanded:
@@ -1102,12 +1193,12 @@ class HorizonOrchestrator:
         )
         ai_client = create_ai_client(self.config.ai)
         analyzer = ContentAnalyzer(
-            ai_client,
-            focus_topics=self.config.filtering.focus_topics,
+            ai_client, self.profiles, console=self.console,
+            profile_settings=self.config.processing.profile_settings,
         )
         await analyzer.analyze_batch(expanded)
 
-    async def _enrich_important_items(self, items: List[ContentItem]) -> None:
+    async def enrich_items(self, items: List[ContentItem]) -> EnrichmentBatchResult:
         """Enrich items with background knowledge (2nd AI pass).
 
         For each item that passed the score threshold, call AI to generate
@@ -1117,15 +1208,32 @@ class HorizonOrchestrator:
             items: Important items to enrich (modified in-place)
         """
         if not items:
-            return
+            return EnrichmentBatchResult()
 
-        self.console.print("📚 Enriching with background knowledge...")
+        self.console.print(
+            f"{self.icons['enrich']} Enriching with background knowledge..."
+        )
         ai_client = create_ai_client(self.config.ai)
-        enricher = ContentEnricher(ai_client)
-        await enricher.enrich_batch(items)
-        self.console.print(f"   Enriched {len(items)} items\n")
+        enricher = ContentEnricher(
+            ai_client,
+            self.profiles,
+            self.config.ai.languages,
+            console=self.console,
+            tools=ToolRegistry(self.storage.summaries_dir),
+        )
+        result = await enricher.enrich_batch(items)
+        self.console.print(
+            f"   Enriched {result.succeeded_count}/{len(items)} items"
+        )
+        if result.failed_count:
+            self.console.print(
+                f"   [yellow]Skipped {result.failed_count} items after enrichment "
+                f"failed: {', '.join(result.failed_ids)}[/yellow]"
+            )
+        self.console.print("")
+        return result
 
-    async def _analyze_content(self, items: List[ContentItem]) -> List[ContentItem]:
+    async def analyze_items(self, items: List[ContentItem]) -> List[ContentItem]:
         """Analyze content items with AI.
 
         Args:
@@ -1134,12 +1242,12 @@ class HorizonOrchestrator:
         Returns:
             List[ContentItem]: Analyzed items
         """
-        self.console.print("🤖 Analyzing content with AI...")
+        self.console.print(f"{self.icons['ai']} Analyzing content with AI...")
 
         ai_client = create_ai_client(self.config.ai)
         analyzer = ContentAnalyzer(
-            ai_client,
-            focus_topics=self.config.filtering.focus_topics,
+            ai_client, self.profiles, console=self.console,
+            profile_settings=self.config.processing.profile_settings,
         )
 
         return await analyzer.analyze_batch(items)
@@ -1162,10 +1270,12 @@ class HorizonOrchestrator:
         Returns:
             str: Markdown summary
         """
-        self.console.print("📝 Generating daily summary...")
+        self.console.print(f"{self.icons['summary']} Generating daily summary...")
 
         summarizer = DailySummarizer(
-            core_score_threshold=self.config.filtering.core_score_threshold
+            profile_names=self.profiles.names,
+            profile_order=self.config.digest.profile_order,
+            core_score_threshold=self.config.digest.core_score_threshold,
         )
 
         return await summarizer.generate_summary(items, date, total_fetched, language=language)

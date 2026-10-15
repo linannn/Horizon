@@ -1,5 +1,6 @@
 """Interactive setup wizard for Horizon configuration."""
 
+import argparse
 import json
 import os
 import sys
@@ -12,17 +13,33 @@ from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich.panel import Panel
 
+from .._cli import add_data_dir_arguments, add_log_level_argument
+from ..logging_config import configure_logging
+
 from ..models import (
-    AIConfig, AIProvider, AI_PROVIDER_DEFAULTS, Config, FilteringConfig, SourcesConfig,
-    GitHubSourceConfig, HackerNewsConfig, RSSSourceConfig,
-    RedditConfig, RedditSubredditConfig, RedditUserConfig,
-    TelegramConfig, TelegramChannelConfig,
+    AIConfig,
+    AIProvider,
+    AI_PROVIDER_DEFAULTS,
+    CollectionConfig,
+    Config,
+    DigestConfig,
+    GitHubSourceConfig,
+    HackerNewsConfig,
+    ProcessingConfig,
+    ProfileSettingsConfig,
+    RSSSourceConfig,
+    RedditConfig,
+    RedditSubredditConfig,
+    RedditUserConfig,
+    SourcesConfig,
+    TelegramChannelConfig,
+    TelegramConfig,
 )
 from ..storage.manager import StorageManager
 from .presets import load_presets, match_sources
 
 
-console = Console()
+console = Console(stderr=True)
 
 
 def print_banner():
@@ -58,24 +75,31 @@ def configure_ai() -> Optional[AIConfig]:
         "AI provider",
         choices=providers,
         default="openai",
+        console=console,
     )
     provider_enum = AIProvider(provider)
 
     provider_defaults = AI_PROVIDER_DEFAULTS.get(provider_enum, {})
-    model = Prompt.ask("Model name", default=provider_defaults.get("model", ""))
+    model = Prompt.ask(
+        "Model name", default=provider_defaults.get("model", ""), console=console
+    )
 
     if provider_enum == AIProvider.OLLAMA:
         base_url = Prompt.ask(
             "Ollama base URL (leave empty for http://localhost:11434)",
             default="",
+            console=console,
         )
     else:
-        base_url = Prompt.ask("Base URL (leave empty for default)", default="")
+        base_url = Prompt.ask(
+            "Base URL (leave empty for default)", default="", console=console
+        )
 
     # Determine default env var name
     api_key_env = Prompt.ask(
         "API key environment variable name",
         default=provider_defaults.get("api_key_env", "API_KEY"),
+        console=console,
     )
 
     # Check if the key is actually set
@@ -89,6 +113,7 @@ def configure_ai() -> Optional[AIConfig]:
     languages = Prompt.ask(
         "Output languages (comma-separated)",
         default="zh,en",
+        console=console,
     )
     lang_list = [l.strip() for l in languages.split(",") if l.strip()]
 
@@ -122,7 +147,7 @@ def get_interests() -> str:
         "[dim]Examples: \"LLM inference\", \"具身智能\", \"Rust systems programming\", "
         "\"web security\", \"开源工具\"[/dim]\n"
     )
-    interests = Prompt.ask("Your interests")
+    interests = Prompt.ask("Your interests", console=console)
     return interests
 
 
@@ -172,7 +197,7 @@ def select_sources(
     console.print(
         "\n[dim]Enter numbers to toggle off/on (e.g. '3 5 7'), or press Enter to accept all:[/dim]"
     )
-    toggle_input = Prompt.ask("Toggle", default="").strip()
+    toggle_input = Prompt.ask("Toggle", default="", console=console).strip()
 
     if toggle_input:
         for num_str in toggle_input.split():
@@ -280,17 +305,24 @@ def build_config(
         telegram=telegram_config,
     )
 
-    filtering = FilteringConfig(
-        ai_score_threshold=7.0,
-        time_window_hours=24,
-        focus_topics=focus_topics or [],
-    )
+    collection = CollectionConfig(time_window_hours=24)
 
     return Config(
-        version="1.0",
         ai=ai_config,
         sources=sources,
-        filtering=filtering,
+        collection=collection,
+        digest=DigestConfig(
+            profile_order=["tech-news", "tech-blog", "finance-news"]
+        ),
+        processing=ProcessingConfig(
+            profile_settings={
+                "tech-news": ProfileSettingsConfig(threshold=7.0, focus_topics=focus_topics or []),
+                "tech-blog": ProfileSettingsConfig(
+                    threshold=4.0, topic_dedup=False, focus_topics=focus_topics or []
+                ),
+                "finance-news": ProfileSettingsConfig(threshold=7.0, focus_topics=focus_topics or []),
+            }
+        ),
     )
 
 
@@ -298,7 +330,8 @@ def merge_configs(new_config: Config, existing_config: Config) -> Config:
     """Merge new config into existing config, deduplicating sources.
 
     Rules:
-    - ai / filtering: use new values (full replacement)
+    - ai: use the newly selected provider settings
+    - collection / digest: preserve existing values because the wizard does not prompt for them
     - sources: deduplicate by unique key, append new ones
     - existing enabled=false sources are preserved
 
@@ -311,7 +344,6 @@ def merge_configs(new_config: Config, existing_config: Config) -> Config:
     """
     merged = existing_config.model_copy(deep=True)
     merged.ai = new_config.ai.model_copy(deep=True)
-    merged.filtering = new_config.filtering.model_copy(deep=True)
 
     merged.sources.github = _merge_source_list(
         new_config.sources.github, existing_config.sources.github, _gh_key
@@ -359,9 +391,16 @@ def _gh_key(src: GitHubSourceConfig) -> str:
 
 def main():
     """Main entry point for the setup wizard."""
+    parser = argparse.ArgumentParser(description="Horizon setup wizard")
+    add_data_dir_arguments(parser)
+    add_log_level_argument(parser)
+    args = parser.parse_args()
+
+    configure_logging(console, level=args.log_level)
+
     print_banner()
 
-    storage = StorageManager(data_dir="data")
+    storage = StorageManager(data_dir=args.data_dir, config_path=args.config)
 
     # Step 1: AI configuration
     ai_config = configure_ai()
@@ -375,7 +414,10 @@ def main():
     # Step 3: Preset library matching
     console.print("\n[dim]Fetching preset source library...[/dim]")
     try:
-        presets = load_presets(prefer_api=True)
+        presets_path = Path(args.data_dir) / "presets.json"
+        if not presets_path.exists():
+            presets_path = Path("data/presets.json")
+        presets = load_presets(presets_path=str(presets_path), prefer_api=True)
         offline = os.environ.get("HORIZON_OFFLINE", "").lower() in ("1", "true", "yes")
         if offline:
             console.print("[dim]Using local presets (offline mode)[/dim]")
@@ -399,7 +441,11 @@ def main():
     ai_available = _ai_recommendations_available(ai_config)
 
     if ai_available:
-        if Confirm.ask("\nAsk AI for additional source recommendations?", default=True):
+        if Confirm.ask(
+            "\nAsk AI for additional source recommendations?",
+            default=True,
+            console=console,
+        ):
             console.print("[dim]Asking AI for recommendations...[/dim]")
             from .ai_recommend import get_ai_recommendations_sync
 
@@ -425,7 +471,11 @@ def main():
     # Merge with existing config if present
     try:
         existing = storage.load_config()
-        if Confirm.ask("\nExisting config.json found. Merge new sources into it?", default=True):
+        if Confirm.ask(
+            "\nExisting config.json found. Merge new sources into it?",
+            default=True,
+            console=console,
+        ):
             config = merge_configs(config, existing)
     except FileNotFoundError:
         pass
@@ -438,7 +488,7 @@ def main():
         f"[green]✓ Configuration saved to {path}[/green]\n\n"
         f"  AI:      {ai_config.provider.value} / {ai_config.model}\n"
         f"  Sources: {_count_sources(config)} total\n"
-        f"  Threshold: {config.filtering.ai_score_threshold}\n\n"
+        f"  Profile: {config.processing.default_profile}\n\n"
         f"Run [bold cyan]horizon[/bold cyan] to start aggregating!",
         title="Setup Complete",
         border_style="green",
@@ -458,7 +508,7 @@ def _count_sources(config: Config) -> int:
     if config.sources.telegram.enabled:
         count += len([s for s in config.sources.telegram.channels if s.enabled])
     if config.sources.twitter and config.sources.twitter.enabled:
-        count += len(config.sources.twitter.users)
+        count += len(config.sources.twitter.users) + len(config.sources.twitter.keywords)
     if config.sources.openbb and config.sources.openbb.enabled:
         count += len([s for s in config.sources.openbb.watchlists if s.enabled])
     if config.sources.ossinsight.enabled:

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import re
 from typing import Annotated, Literal, Optional, List, Dict, Any, NamedTuple, Union
-from pydantic import BaseModel, HttpUrl, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, HttpUrl, Field, field_validator, model_validator
 
 
 class SourceType(str, Enum):
@@ -36,16 +36,76 @@ SOURCE_REGISTRY = {
     SourceType.RSS.value: SourceDefinition("rss", config_is_list=True),
     SourceType.REDDIT.value: SourceDefinition("reddit", item_fields=("subreddits", "users")),
     SourceType.TELEGRAM.value: SourceDefinition("telegram", item_fields=("channels",)),
-    SourceType.TWITTER.value: SourceDefinition("twitter", item_fields=("users",)),
+    SourceType.TWITTER.value: SourceDefinition("twitter", item_fields=("users", "keywords")),
     SourceType.OPENBB.value: SourceDefinition("openbb", item_fields=("watchlists",)),
     SourceType.OSSINSIGHT.value: SourceDefinition("ossinsight"),
     SourceType.GDELT.value: SourceDefinition("gdelt"),
     SourceType.GOOGLE_NEWS.value: SourceDefinition("google_news"),
 }
 
+ProfileRoute = Optional[Union[str, List[str]]]
+
+
+class ClassificationResult(BaseModel):
+    """Resolved processing profile for a content item."""
+
+    profile: str
+    method: Literal["source_override", "ai_match"]
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    reason: Optional[str] = None
+
+
+class ContentAnalysis(BaseModel):
+    """Profile-driven first-pass analysis."""
+
+    score: Optional[float] = Field(default=None, ge=0, le=10, allow_inf_nan=False)
+    focus_relevant: Optional[bool] = None
+    substantive: Optional[bool] = None
+    reason: str
+    summary: str
+    tags: List[str] = Field(default_factory=list)
+
+
+class ArtifactSource(BaseModel):
+    """External source used while producing an artifact."""
+
+    id: str
+    title: str
+    url: str
+
+
+class ContentBlock(BaseModel):
+    """A renderable section produced by an enrichment profile."""
+
+    id: str
+    type: Literal["section"] = "section"
+    title: str
+    content: str
+    source_refs: List[str] = Field(default_factory=list)
+    primary: bool = False
+
+
+class ContentArtifact(BaseModel):
+    """Localized, profile-defined enriched content."""
+
+    language: str
+    title: str
+    blocks: List[ContentBlock] = Field(default_factory=list)
+    sources: List[ArtifactSource] = Field(default_factory=list)
+
+
+class ProcessingResult(BaseModel):
+    """All AI processing state for a content item."""
+
+    classification: ClassificationResult
+    analysis: Optional[ContentAnalysis] = None
+    artifacts: Dict[str, ContentArtifact] = Field(default_factory=dict)
+
 
 class ContentItem(BaseModel):
     """Unified content item model from any source."""
+
+    model_config = ConfigDict(extra="forbid")
 
     id: str  # Format: {source}:{subtype}:{native_id}
     source_type: SourceType
@@ -56,14 +116,8 @@ class ContentItem(BaseModel):
     published_at: datetime
     fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    # AI analysis results
-    ai_score: Optional[float] = None  # 0-10 importance score
-    ai_focus_relevant: Optional[bool] = None
-    ai_substantive: Optional[bool] = None
-    ai_reason: Optional[str] = None
-    ai_summary: Optional[str] = None
-    ai_tags: List[str] = Field(default_factory=list)
+    profile: ProfileRoute = None
+    processing: Optional[ProcessingResult] = None
 
 
 class AIProvider(str, Enum):
@@ -170,6 +224,7 @@ class GitHubSourceConfig(BaseModel):
     repo: Optional[str] = None
     enabled: bool = True
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class HackerNewsConfig(BaseModel):
@@ -179,6 +234,7 @@ class HackerNewsConfig(BaseModel):
     fetch_top_stories: int = 30
     min_score: int = 100
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class ExtractorType(str, Enum):
@@ -206,6 +262,7 @@ class RSSSourceConfig(BaseModel):
     category: Optional[str] = None
     content_extractor: Optional[str] = None
     original_link_text: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class RedditSubredditConfig(BaseModel):
@@ -220,6 +277,7 @@ class RedditSubredditConfig(BaseModel):
     fetch_limit: int = 25
     min_score: int = 10
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class RedditUserConfig(BaseModel):
@@ -230,6 +288,7 @@ class RedditUserConfig(BaseModel):
     sort: str = "new"
     fetch_limit: int = 10
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class RedditConfig(BaseModel):
@@ -248,6 +307,7 @@ class TelegramChannelConfig(BaseModel):
     enabled: bool = True
     fetch_limit: int = 20
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class TelegramConfig(BaseModel):
@@ -263,13 +323,17 @@ class TwitterConfig(BaseModel):
     Two modes are supported:
     - "apify": Use Apify scweet actor (requires APIFY_TOKEN, more reliable)
     - "playwright": Use Playwright + browser cookies (free, no token needed)
+
+    `keywords` uses Apify search mode. Playwright logs a warning and skips them.
     """
 
     enabled: bool = True
     mode: str = "apify"  # "apify" or "playwright"
     users: List[str] = Field(default_factory=list)
+    keywords: List[str] = Field(default_factory=list)
     fetch_limit: int = 10
     category: Optional[str] = None
+    profile: ProfileRoute = None
     fetch_reply_text: bool = False
     max_replies_per_tweet: int = 3
     max_tweets_to_expand: int = 10
@@ -295,6 +359,7 @@ class OpenBBWatchlist(BaseModel):
     provider: str = "yfinance"
     fetch_limit: int = 20
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class OpenBBConfig(BaseModel):
@@ -335,6 +400,7 @@ class OSSInsightConfig(BaseModel):
     min_stars: int = 5
     max_items: int = 30
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class GDELTConfig(BaseModel):
@@ -355,6 +421,7 @@ class GDELTConfig(BaseModel):
     language: Optional[str] = None  # sourcelang filter, e.g. "english"; None = no filter
     country: Optional[str] = None  # sourcecountry filter; None = no filter
     category: Optional[str] = None  # Horizon category label for downstream grouping
+    profile: ProfileRoute = None
 
 
 class GoogleNewsConfig(BaseModel):
@@ -372,6 +439,7 @@ class GoogleNewsConfig(BaseModel):
     ceid: Optional[str] = None  # when None scraper derives it as "{country}:{language}"
     max_results: int = 100  # cap ~100
     category: Optional[str] = None
+    profile: ProfileRoute = None
 
 
 class SourcesConfig(BaseModel):
@@ -456,6 +524,14 @@ class WebhookConfig(BaseModel):
         return v
 
 
+class WeChatConfig(BaseModel):
+    """Optional iLink delivery; credentials live in the data directory's session file."""
+
+    enabled: bool = False
+    languages: Optional[List[str]] = None
+    chunk_size: int = Field(default=4000, gt=0, le=4000)
+
+
 class EmailConfig(BaseModel):
     """Email configuration for updates/subscriptions."""
 
@@ -482,46 +558,91 @@ class CategoryGroupConfig(BaseModel):
     allow_backfill: bool = False
 
 
-class FilteringConfig(BaseModel):
-    """Content filtering configuration."""
+class ProfileSettingsConfig(BaseModel):
+    """User preferences applied to a processing profile at runtime."""
 
-    ai_score_threshold: float = 7.0
-    core_score_threshold: float = 7.0
-    watch_score_threshold: Optional[float] = Field(default=None, ge=0, le=10)
-    max_watch_items: Optional[int] = Field(default=None, gt=0)
-    time_window_hours: int = 24
+    model_config = ConfigDict(extra="forbid")
+
+    threshold: Optional[float] = Field(default=None, ge=0, le=10)
+    topic_dedup: bool = True
     focus_topics: List[str] = Field(default_factory=list)
-    max_items: Optional[int] = Field(default=None, gt=0)
-    max_items_per_source: Optional[int] = Field(default=None, gt=0)
-    category_groups: Dict[str, CategoryGroupConfig] = Field(default_factory=dict)
-    fill_remaining_slots: bool = False
-    default_group: str = "other"
-    default_group_limit: Optional[int] = Field(default=None, gt=0)
+    watch_score_threshold: Optional[float] = Field(default=None, ge=0, le=10)
 
     @model_validator(mode="after")
-    def validate_watch_items(self) -> "FilteringConfig":
-        """Require a complete, non-overlapping lower-priority score band."""
-        if (self.watch_score_threshold is None) != (self.max_watch_items is None):
-            raise ValueError(
-                "watch_score_threshold and max_watch_items must be configured together"
-            )
-        if (
-            self.watch_score_threshold is not None
-            and self.watch_score_threshold >= self.ai_score_threshold
+    def validate_watch_threshold(self) -> "ProfileSettingsConfig":
+        """Keep the lower-priority score band below the main threshold."""
+        if self.watch_score_threshold is not None and (
+            self.threshold is None or self.watch_score_threshold >= self.threshold
         ):
             raise ValueError(
-                "watch_score_threshold must be lower than ai_score_threshold"
+                "watch_score_threshold requires a higher explicit threshold"
             )
         return self
+
+
+class ProcessingConfig(BaseModel):
+    """Profile discovery and fallback settings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    profiles_dir: str = "profiles"
+    default_profile: str = "tech-news"
+    profile_settings: Dict[str, ProfileSettingsConfig] = Field(default_factory=dict)
+
+
+class DisplayConfig(BaseModel):
+    """Controls terminal output presentation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    icon_style: Literal["emoji", "nerd", "ascii"] = "emoji"
+
+
+class CollectionConfig(BaseModel):
+    """Controls which source items are fetched."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    time_window_hours: int = 24
+
+
+class DigestConfig(BaseModel):
+    """Controls grouping and limits in the final digest."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_items: Optional[int] = Field(default=None, gt=0)
+    core_score_threshold: float = 7.0
+    max_watch_items: int = Field(default=0, ge=0)
+    max_items_per_source: Optional[int] = Field(default=None, gt=0)
+    fill_remaining_slots: bool = False
+    category_groups: Dict[str, CategoryGroupConfig] = Field(default_factory=dict)
+    default_group: str = "other"
+    default_group_limit: Optional[int] = Field(default=None, gt=0)
+    profile_order: List[str] = Field(default_factory=list)
+
+    @field_validator("profile_order")
+    @classmethod
+    def validate_profile_order(cls, value: List[str]) -> List[str]:
+        if any(not profile_id.strip() for profile_id in value):
+            raise ValueError("digest.profile_order entries must be non-empty strings")
+        if len(value) != len(set(value)):
+            raise ValueError("digest.profile_order entries must be unique")
+        return value
 
 
 class Config(BaseModel):
     """Main configuration model."""
 
-    version: str = "1.0"
+    model_config = ConfigDict(extra="forbid")
+
     ai: AIConfig
     sources: SourcesConfig
-    filtering: FilteringConfig
+    collection: CollectionConfig = Field(default_factory=CollectionConfig)
+    digest: DigestConfig = Field(default_factory=DigestConfig)
+    processing: ProcessingConfig = Field(default_factory=ProcessingConfig)
+    display: DisplayConfig = Field(default_factory=DisplayConfig)
     extractors: Dict[str, ExtractorConfig] = Field(default_factory=dict)
     email: Optional[EmailConfig] = None
     webhook: Optional[WebhookConfig] = None
+    wechat: Optional[WeChatConfig] = None

@@ -1,96 +1,689 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from src.ai.enricher import ContentEnricher
-from src.ai.prompts import CONTENT_ENRICHMENT_SYSTEM
-from src.models import ContentItem, SourceType
+from src.ai.prompting.enrichment import GROUNDING_RULES
+from src.models import (
+    ArtifactSource,
+    ClassificationResult,
+    ContentAnalysis,
+    ContentArtifact,
+    ContentBlock,
+    ContentItem,
+    ProcessingResult,
+    SourceType,
+)
+from src.processing import ProfileRegistry
+from src.processing.tools import ToolRegistry, ToolResult
 
 
-def test_enrichment_searches_claim_first_and_keeps_primary_source(monkeypatch) -> None:
-    calls = []
+PROFILES = ProfileRegistry.load(
+    Path(__file__).resolve().parents[1] / "profiles", "tech-news"
+)
 
-    async def complete(**kwargs):  # type: ignore[no-untyped-def]
-        calls.append(kwargs)
-        if len(calls) == 1:
-            return json.dumps(
-                {"queries": ["MCP stateless protocol", "MCP stateless protocol"]}
-            )
+
+def make_item() -> ContentItem:
+    return ContentItem(
+        id="rss:test:item",
+        source_type=SourceType.RSS,
+        title="A technical release",
+        url="https://example.com/item",
+        content="A project released a new architecture.",
+        published_at=datetime.now(timezone.utc),
+        profile="tech-news",
+        processing=ProcessingResult(
+            classification=ClassificationResult(
+                profile="tech-news", method="source_override"
+            ),
+            analysis=ContentAnalysis(
+                score=8.5,
+                reason="Important release",
+                summary="A new architecture was released.",
+                tags=["systems"],
+            ),
+        ),
+    )
+
+
+class FakeTools:
+    names = {"web_search", "history_search"}
+
+    async def execute(self, request_id, block_id, tool, arguments, current_item=None):
+        assert block_id == "background"
+        assert tool == "web_search"
+        assert arguments["query"] in {"A technical release", "project architecture"}
+        return ToolResult(
+            request_id=request_id,
+            block_id=block_id,
+            tool=tool,
+            results=[
+                {
+                    "title": "Project documentation",
+                    "url": "https://docs.example.com/project",
+                    "text": "Architecture background.",
+                }
+            ],
+        )
+
+
+def test_enrichment_generates_blocks_and_validated_sources():
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "tool_requests": [
+                        {
+                            "block_id": "background",
+                            "tool": "web_search",
+                            "arguments": {"query": "project architecture"},
+                            "purpose": "Explain the existing architecture",
+                        }
+                    ]
+                }
+            ),
+            json.dumps(
+                {
+                    "title": "新架構發佈",
+                    "blocks": [
+                        {
+                            "id": "summary",
+                            "title": "摘要",
+                            "content": "項目發佈了新的架構，它改變了系統設計，並採用了新的邊界。",
+                            "source_refs": [],
+                        }
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "title": "新架構發佈",
+                    "blocks": [
+                        {
+                            "id": "summary",
+                            "type": "section",
+                            "title": "摘要",
+                            "content": "项目发布了新的架构，它改变了系统设计，并采用了新的边界。",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "background",
+                            "type": "section",
+                            "title": "未隔离的背景",
+                            "content": "这个版本应被丢弃。",
+                            "source_refs": [],
+                        },
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "title": "",
+                    "block": {
+                        "id": "background",
+                        "type": "section",
+                        "title": "背景",
+                        "content": "旧架构的背景信息。",
+                        "source_refs": ["tool-1"],
+                    },
+                }
+            ),
+        ]
+    )
+    requests = []
+
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        return next(responses)
+
+    item = make_item()
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["zh"],
+        tools=FakeTools(),
+    )
+    asyncio.run(enricher._enrich_item(item))
+
+    artifact = item.processing.artifacts["zh"]
+    assert artifact.title == "新架构发布"
+    assert artifact.blocks[0].content == "项目发布了新的架构，它改变了系统设计，并采用了新的边界。"
+    assert [block.id for block in artifact.blocks] == [
+        "summary",
+        "background",
+    ]
+    assert artifact.blocks[-1].title == "背景"
+    assert artifact.blocks[0].primary is True
+    assert artifact.blocks[1].primary is False
+    assert artifact.blocks[-1].source_refs == ["tool-1-1"]
+    assert artifact.sources[0].url == str(item.url)
+    assert artifact.sources[1].url == "https://docs.example.com/project"
+    assert len(requests) == 4
+    assert "explicitly mentioned in the item" in requests[0]["system"]
+    assert "Treat the source item as the primary account" in requests[1]["system"]
+    assert "Simplified Chinese (language tag `zh`)" in requests[1]["system"]
+    assert "Treat the source item as the primary account" in requests[3]["system"]
+    assert "https://docs.example.com/project" not in requests[1]["user"]
+    assert "https://docs.example.com/project" in requests[3]["user"]
+    assert "# Already generated blocks" in requests[3]["user"]
+    assert "項目發佈了新的架構，它改變了系統設計，並採用了新的邊界。" in requests[3]["user"]
+
+
+def test_enrichment_rejects_tool_on_unapproved_block():
+    async def complete(**kwargs):
         return json.dumps(
             {
-                "title_en": "Stateless MCP reaches Workers",
-                "title_zh": "无状态 MCP 可直接运行在 Workers 上",
-                "whats_new_en": "MCP removed protocol sessions from the core request path.",
-                "whats_new_zh": "MCP 从核心请求路径中移除了协议会话。",
-                "why_it_matters_en": "Servers can use request-scoped infrastructure.",
-                "why_it_matters_zh": "服务器可以使用请求级基础设施。",
-                "key_details_en": "The change removes the required handshake.",
-                "key_details_zh": "该变化移除了强制握手。",
-                "background_en": "MCP connects agents to tools and data.",
-                "background_zh": "MCP 用于连接智能体、工具和数据。",
-                "community_discussion_en": "",
-                "community_discussion_zh": "",
-                "sources": [
-                    "https://modelcontextprotocol.io/specification/2026-07-28",
-                    "https://unrelated.example/article",
-                ],
+                "tool_requests": [
+                    {
+                        "block_id": "summary",
+                        "tool": "web_search",
+                        "arguments": {"query": "unapproved"},
+                        "purpose": "Rewrite the news",
+                    }
+                ]
             }
         )
 
-    client = SimpleNamespace(
-        complete=complete,
-        config=SimpleNamespace(enrichment_concurrency=1),
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["zh"],
+        tools=FakeTools(),
     )
-    enricher = ContentEnricher(client)
-    search_queries = []
 
-    async def web_search(query, max_results=3):  # type: ignore[no-untyped-def]
-        search_queries.append(query)
-        if query == "MCP stateless protocol":
-            return [
+    with pytest.raises(ValueError, match="not allowed"):
+        asyncio.run(enricher._enrich_item(make_item()))
+
+
+def test_enrichment_rejects_malformed_tool_plan():
+    async def complete(**kwargs):
+        return "[]"
+
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["zh"],
+        tools=FakeTools(),
+    )
+
+    with pytest.raises(ValueError, match="tool plan"):
+        asyncio.run(enricher._enrich_item(make_item()))
+
+
+def test_enrichment_repairs_malformed_tool_plan_once():
+    responses = iter(
+        [
+            "[]",
+            json.dumps({"tool_requests": []}),
+            json.dumps(
                 {
-                    "title": "MCP Specification",
-                    "url": "https://modelcontextprotocol.io/specification/2026-07-28",
-                    "body": "The protocol supports stateless requests.",
+                    "title": "Technical release",
+                    "blocks": [
+                        {
+                            "id": "summary",
+                            "type": "section",
+                            "title": "Summary",
+                            "content": "A complete summary.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "background",
+                            "type": "section",
+                            "title": "Background",
+                            "content": "Context for the release.",
+                            "source_refs": [],
+                        }
+                    ],
                 }
-            ]
-        return []
+            ),
+        ]
+    )
+    requests = []
 
-    monkeypatch.setattr(enricher, "_web_search", web_search)
-    item = ContentItem(
-        id="rss:cloudflare:mcp-v2",
-        source_type=SourceType.RSS,
-        title="The next generation of MCP",
-        url="https://blog.cloudflare.com/mcp-v2/",
-        content="MCP is now a fully stateless protocol.",
-        author="Cloudflare",
-        published_at=datetime(2026, 8, 6, tzinfo=timezone.utc),
-        ai_score=8.0,
-        ai_reason="Directly relevant protocol update.",
-        ai_summary="MCP now supports stateless server deployments.",
-        ai_tags=["MCP", "Workers"],
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        return next(responses)
+
+    item = make_item()
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["en"],
+        tools=FakeTools(),
     )
 
     asyncio.run(enricher._enrich_item(item))
 
-    assert search_queries == ["The next generation of MCP", "MCP stateless protocol"]
-    assert "**Primary Source:**" in calls[1]["user"]
-    assert item.metadata["whats_new_zh"] == "MCP 从核心请求路径中移除了协议会话。"
-    assert item.metadata["sources"] == [
-        {
-            "url": "https://blog.cloudflare.com/mcp-v2/",
-            "title": "The next generation of MCP",
-        },
-        {
-            "url": "https://modelcontextprotocol.io/specification/2026-07-28",
-            "title": "MCP Specification",
-        },
+    assert len(requests) == 3
+    assert all(request["temperature"] == 0 for request in requests)
+    assert requests[1]["temperature"] == 0
+    assert item.processing.artifacts["en"].blocks[0].id == "summary"
+    assert [source.url for source in item.processing.artifacts["en"].sources] == [
+        str(item.url)
     ]
 
 
-def test_enrichment_prompt_requires_numeric_and_source_consistency() -> None:
-    assert "approved/rejected or detected/missed" in CONTENT_ENRICHMENT_SYSTEM
-    assert "numerical and logical consistency" in CONTENT_ENRICHMENT_SYSTEM
-    assert "Primary Source URL first" in CONTENT_ENRICHMENT_SYSTEM
-    assert "non-overlapping" in CONTENT_ENRICHMENT_SYSTEM
+def test_enrichment_repairs_empty_blog_block_once():
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "title": "A technical story",
+                    "blocks": [
+                        {
+                            "id": "background",
+                            "title": " ",
+                            "content": "",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "solution",
+                            "title": "Solution and results",
+                            "content": "The author explains the implementation.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "takeaway",
+                            "title": "Takeaway",
+                            "content": "The approach is useful in bounded cases.",
+                            "source_refs": [],
+                        }
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "title": "A technical story",
+                    "blocks": [
+                        {
+                            "id": "background",
+                            "title": "Background",
+                            "content": "The author frames the original problem and constraints.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "solution",
+                            "title": "Solution and results",
+                            "content": "The author explains the implementation and its effects.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "takeaway",
+                            "title": "Takeaway",
+                            "content": "The approach is useful in bounded cases.",
+                            "source_refs": [],
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    requests = []
+
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        return next(responses)
+
+    item = make_item()
+    item.profile = "tech-blog"
+    item.processing.classification.profile = "tech-blog"
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["en"],
+        tools=FakeTools(),
+    )
+
+    asyncio.run(enricher._enrich_item(item))
+
+    assert len(requests) == 2
+    assert requests[1]["temperature"] == 0
+    assert "corrected JSON object" in requests[1]["user"]
+    assert [
+        block.id for block in item.processing.artifacts["en"].blocks
+    ] == ["background", "solution", "takeaway"]
+    assert all(
+        not block.primary for block in item.processing.artifacts["en"].blocks
+    )
+
+
+def test_enrichment_repairs_schema_type_used_as_blog_block_id():
+    responses = iter(
+        [
+            json.dumps(
+                {
+                    "title": "A technical story",
+                    "blocks": [
+                        {
+                            "id": "section",
+                            "type": "section",
+                            "title": "Background",
+                            "content": "A complete but misidentified background block.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "solution",
+                            "title": "Solution and results",
+                            "content": "The implementation produced a measured result.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "takeaway",
+                            "title": "Takeaway",
+                            "content": "The method has a clear bounded use.",
+                            "source_refs": [],
+                        }
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "title": "A technical story",
+                    "blocks": [
+                        {
+                            "id": "background",
+                            "title": "Background",
+                            "content": "The corrected background and constraints.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "solution",
+                            "title": "Solution and results",
+                            "content": "The implementation produced a measured result.",
+                            "source_refs": [],
+                        },
+                        {
+                            "id": "takeaway",
+                            "title": "Takeaway",
+                            "content": "The method has a clear bounded use.",
+                            "source_refs": [],
+                        }
+                    ],
+                }
+            ),
+        ]
+    )
+    requests = []
+
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        return next(responses)
+
+    item = make_item()
+    item.profile = "tech-blog"
+    item.processing.classification.profile = "tech-blog"
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["en"],
+        tools=FakeTools(),
+    )
+
+    asyncio.run(enricher._enrich_item(item))
+
+    assert len(requests) == 2
+    assert "unknown blocks: section" in requests[1]["user"]
+    assert item.processing.artifacts["en"].blocks[0].id == "background"
+
+
+def test_failed_reenrichment_removes_stale_target_artifact():
+    async def complete(**kwargs):
+        return json.dumps(
+            {
+                "title": "A technical story",
+                "blocks": [
+                    {
+                        "id": "story",
+                        "type": "section",
+                        "title": "",
+                        "content": "",
+                        "source_refs": [],
+                    }
+                ],
+            }
+        )
+
+    item = make_item()
+    item.profile = "tech-blog"
+    item.processing.classification.profile = "tech-blog"
+    item.processing.artifacts["en"] = ContentArtifact(
+        language="en",
+        title="Stale story",
+    )
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["en"],
+        tools=FakeTools(),
+    )
+
+    with pytest.raises(ValueError, match="Invalid enrichment artifact"):
+        asyncio.run(enricher._enrich_item(item))
+
+    assert "en" not in item.processing.artifacts
+
+
+def test_enrichment_rejects_cross_block_source_reference():
+    block = ContentBlock(
+        id="summary",
+        type="section",
+        title="News",
+        content="Content",
+        source_refs=["tool-1-1"],
+    )
+    tool_result = ToolResult(
+        request_id="tool-1",
+        block_id="background",
+        tool="web_search",
+        results=[
+            {
+                "title": "Source",
+                "url": "https://example.com/source",
+                "text": "Context",
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="unknown source refs"):
+        ContentEnricher._validate_blocks(
+            [block], PROFILES.get("tech-news"), [tool_result]
+        )
+
+
+def test_enrichment_rejects_empty_required_block():
+    block = ContentBlock(
+        id="summary",
+        type="section",
+        title=" ",
+        content="",
+        source_refs=[],
+    )
+
+    with pytest.raises(ValueError, match="cannot be empty"):
+        ContentEnricher._validate_blocks(
+            [block], PROFILES.get("tech-news"), []
+        )
+
+
+def test_enrichment_batch_reports_failure_without_discarding_successes():
+    async def complete(**kwargs):
+        raise RuntimeError("AI unavailable")
+
+    successful_item = make_item()
+    failed_item = make_item().model_copy(update={"id": "rss:test:failed"})
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete),
+        PROFILES,
+        ["zh"],
+        tools=FakeTools(),
+    )
+
+    async def enrich_item(item):  # type: ignore[no-untyped-def]
+        if item.id == failed_item.id:
+            raise RuntimeError("AI unavailable")
+
+    enricher._enrich_item = enrich_item  # type: ignore[method-assign]
+
+    result = asyncio.run(enricher.enrich_batch([successful_item, failed_item]))
+
+    assert result.status == "partial_failure"
+    assert result.succeeded_ids == [successful_item.id]
+    assert result.failed_ids == [failed_item.id]
+    assert result.failures[failed_item.id] == "RuntimeError: AI unavailable"
+
+
+def test_history_search_reuses_one_call_for_both_languages(tmp_path, monkeypatch):
+    (tmp_path / "horizon-2026-04-01-en.md").write_text(
+        "### [Atlas preview](https://example.com/preview) ⭐️ 8/10\n\n"
+        "Atlas preview requires manual batch configuration.\n\n---\n",
+        encoding="utf-8",
+    )
+    tools = ToolRegistry(tmp_path)
+    tool_calls = []
+    execute = tools.execute
+
+    async def record_execute(**kwargs):
+        tool_calls.append(kwargs)
+        return await execute(**kwargs)
+
+    monkeypatch.setattr(tools, "execute", record_execute)
+    requests = []
+
+    async def complete(**kwargs):
+        requests.append(kwargs)
+        if kwargs["system"].startswith("# Tool planning"):
+            return json.dumps({"tool_requests": [
+                {"block_id": "background", "tool": "history_search",
+                 "arguments": {"query": query}, "purpose": "Find the earlier version"}
+                for query in ("Atlas preview", "Atlas batch")
+            ]})
+        if "Generate only block `background`" in kwargs["system"]:
+            assert "Atlas preview requires manual batch configuration." in kwargs["user"]
+            return json.dumps({"block": {
+                "id": "background", "title": "Earlier coverage",
+                "content": "The April 1 digest covered the preview's manual batch configuration.",
+                "source_refs": ["tool-1-1"],
+            }})
+        assert "manual batch configuration" not in kwargs["user"]
+        return json.dumps({"title": "Atlas release", "blocks": [{
+            "id": "summary", "title": "Summary", "content": "Atlas now automates batching.",
+        }]})
+
+    item = make_item()
+    item.published_at = datetime(2026, 4, 2, tzinfo=timezone.utc)
+    enricher = ContentEnricher(SimpleNamespace(complete=complete), PROFILES, ["en", "zh"], tools=tools)
+
+    asyncio.run(enricher._enrich_item(item))
+
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["current_item"] is item
+    # One existing planning call, then base and background generation per language.
+    assert len(requests) == 5
+    for language in ("en", "zh"):
+        artifact = item.processing.artifacts[language]
+        assert artifact.sources[0].url == str(item.url)
+        assert artifact.sources[1].url == "https://example.com/preview"
+        assert artifact.sources[1].title.startswith("2026-04-01")
+        assert artifact.blocks[-1].source_refs == ["tool-1-1"]
+
+
+def test_enrichment_searches_claim_first_and_deduplicates_before_limit():
+    queries = []
+
+    async def complete(**kwargs):
+        return json.dumps({"tool_requests": [
+            {"block_id": "background", "tool": "web_search",
+             "arguments": {"query": query}, "purpose": "Verify the release"}
+            for query in (
+                " a TECHNICAL   release ",
+                "project architecture",
+                " Project  Architecture ",
+                "architecture limitations",
+                "unneeded fourth query",
+            )
+        ]})
+
+    class RecordingTools:
+        names = {"web_search", "history_search"}
+
+        async def execute(self, request_id, block_id, tool, arguments, current_item=None):
+            queries.append(arguments["query"])
+            return ToolResult(request_id, block_id, tool, [])
+
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete), PROFILES, ["en"], tools=RecordingTools()
+    )
+    asyncio.run(enricher._plan_and_execute_tools(make_item(), PROFILES.get("tech-news")))
+
+    assert queries == [
+        "A technical release", "project architecture", "architecture limitations"
+    ]
+
+
+def test_enrichment_keeps_primary_and_all_cited_supporting_sources():
+    item = make_item()
+    sources = {
+        source_id: ArtifactSource(id=source_id, title=source_id, url=url)
+        for source_id, url in (
+            ("tool-1-1", str(item.url)),
+            ("tool-1-2", "https://docs.example.com/release"),
+            ("tool-2-1", "https://docs.example.com/release"),
+            ("tool-2-2", "https://docs.example.com/limitations"),
+            ("tool-2-3", "https://example.com/extra"),
+        )
+    }
+    blocks = [ContentBlock(
+        id="background", title="Background", content="Grounded context.",
+        source_refs=list(sources),
+    )]
+
+    selected = ContentEnricher._select_sources(item, blocks, sources)
+
+    assert [source.url for source in selected] == [
+        str(item.url), "https://docs.example.com/release",
+        "https://docs.example.com/limitations", "https://example.com/extra",
+    ]
+    assert blocks[0].source_refs == ["primary", "tool-1-2", "tool-2-2", "tool-2-3"]
+
+
+def test_enrichment_prompt_requires_numeric_and_source_consistency():
+    assert "approved/rejected or detected/missed" in GROUNDING_RULES
+    assert "numerical and logical consistency" in GROUNDING_RULES
+    assert "Primary Source URL first" in GROUNDING_RULES
+    assert "non-overlapping" in GROUNDING_RULES
+
+
+def test_enrichment_preserves_same_query_evidence_for_separate_blocks():
+    async def complete(**kwargs):
+        return json.dumps({"tool_requests": [
+            {"block_id": block_id, "tool": "web_search",
+             "arguments": {"query": "project architecture"},
+             "purpose": "Verify this block's facts"}
+            for block_id in ("background", "impact")
+        ]})
+
+    class RecordingTools:
+        names = {"web_search", "history_search"}
+
+        async def execute(self, request_id, block_id, tool, arguments, current_item=None):
+            return ToolResult(request_id, block_id, tool, [{
+                "title": arguments["query"], "url": "https://docs.example.com/project",
+                "text": "Architecture background.",
+            }])
+
+    enricher = ContentEnricher(
+        SimpleNamespace(complete=complete), PROFILES, ["en"], tools=RecordingTools()
+    )
+    results = asyncio.run(
+        enricher._plan_and_execute_tools(make_item(), PROFILES.get("tech-news"))
+    )
+
+    assert [(result.block_id, result.results[0]["title"]) for result in results] == [
+        ("background", "A technical release"),
+        ("background", "project architecture"),
+        ("impact", "project architecture"),
+    ]

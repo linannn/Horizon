@@ -1,10 +1,9 @@
 {
-  "version": "1.0",
   "ai": {
-    "provider": "deepseek",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://api.deepseek.com",
-    "api_key_env": "DEEPSEEK_API_KEY",
+    "provider": "minimax",
+    "model": "MiniMax-M3",
+    "base_url": "https://api.minimax.io/v1",
+    "api_key_env": "MINIMAX_API_KEY",
     "temperature": 0.3,
     "max_tokens": 8192,
     "throttle_sec": 1,
@@ -21,255 +20,294 @@
         "owner": "openai",
         "repo": "codex",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "anthropics",
         "repo": "claude-code",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "google-gemini",
         "repo": "gemini-cli",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "github",
         "repo": "copilot-cli",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "anomalyco",
         "repo": "opencode",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "cline",
         "repo": "cline",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "aaif-goose",
         "repo": "goose",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "continuedev",
         "repo": "continue",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "Aider-AI",
         "repo": "aider",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "OpenHands",
         "repo": "OpenHands",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "vercel",
         "repo": "ai",
         "enabled": false,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "pydantic",
         "repo": "pydantic-ai",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "browser-use",
         "repo": "browser-use",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "browserbase",
         "repo": "stagehand",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "mastra-ai",
         "repo": "mastra",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "langchain-ai",
         "repo": "langgraph",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "modelcontextprotocol",
         "repo": "typescript-sdk",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "type": "repo_releases",
         "owner": "modelcontextprotocol",
         "repo": "servers",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       }
     ],
     "hackernews": {
       "enabled": true,
       "fetch_top_stories": 30,
       "min_score": 150,
-      "category": "discovery"
+      "category": "discovery",
+      "profile": "tech-news"
     },
     "rss": [
       {
         "name": "Simon Willison",
         "url": "https://simonwillison.net/atom/everything/",
         "enabled": true,
-        "category": "engineering-practice"
+        "category": "engineering-practice",
+        "profile": "tech-news"
       },
       {
         "name": "Latent Space",
         "url": "https://www.latent.space/feed",
         "enabled": true,
-        "category": "engineering-practice"
+        "category": "engineering-practice",
+        "profile": "tech-news"
       },
       {
         "name": "GitHub Changelog",
         "url": "https://github.blog/changelog/feed/",
         "enabled": true,
-        "category": "release-monitoring"
+        "category": "release-monitoring",
+        "profile": "tech-news"
       },
       {
         "name": "The Pragmatic Engineer",
         "url": "https://newsletter.pragmaticengineer.com/feed",
         "enabled": true,
-        "category": "engineering-practice"
+        "category": "engineering-practice",
+        "profile": "tech-news"
       },
       {
         "name": "InfoQ AI Coding",
         "url": "https://feed.infoq.com/ai-coding/news/",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "GitHub AI & ML",
         "url": "https://github.blog/ai-and-ml/feed/",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "JetBrains AI",
         "url": "https://blog.jetbrains.com/ai/feed/",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "Microsoft for Developers - AI",
         "url": "https://devblogs.microsoft.com/ai/feed/",
         "enabled": true,
-        "category": "engineering-practice"
+        "category": "engineering-practice",
+        "profile": "tech-news"
       },
       {
         "name": "Cloudflare AI",
         "url": "https://blog.cloudflare.com/tag/ai/rss/",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "agent-ecosystem",
+        "profile": "tech-news"
       },
       {
         "name": "Docker AI",
         "url": "https://www.docker.com/blog/tag/ai/feed/",
         "enabled": true,
-        "category": "agent-ecosystem"
+        "category": "agent-ecosystem",
+        "profile": "tech-news"
       },
       {
         "name": "宝玉的分享",
         "url": "https://www.baoyu.ai/feed.xml",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "向阳乔木",
         "url": "https://blog.qiaomu.ai/feed.xml",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "歸藏的 AI 工具箱",
         "url": "https://wechat2rss.bestblogs.dev/feed/1c3e3571b1627d23ee9c64521a0b0a41d3fe2987.xml",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "AI 产品黄叔",
         "url": "https://wechat2rss.bestblogs.dev/feed/1f1030491e15e5349aae42367513d6b3f70a8f8b.xml",
         "enabled": true,
-        "category": "ai-coding"
+        "category": "ai-coding",
+        "profile": "tech-news"
       },
       {
         "name": "数字生命卡兹克",
         "url": "https://wechat2rss.bestblogs.dev/feed/ff621c3e98d6ae6fceb3397e57441ffc6ea3c17f.xml",
         "enabled": true,
-        "category": "ai-news"
+        "category": "ai-news",
+        "profile": "tech-news"
       },
       {
         "name": "量子位",
         "url": "https://wechat2rss.xlab.app/feed/7131b577c61365cb47e81000738c10d872685908.xml",
         "enabled": true,
-        "category": "ai-news"
+        "category": "ai-news",
+        "profile": "tech-news"
       },
       {
         "name": "DailyDawn",
         "url": "https://dailydawn.dev/feed.xml",
         "enabled": true,
-        "category": "ai-news"
+        "category": "ai-news",
+        "profile": "tech-news"
       },
       {
         "name": "The Decoder",
         "url": "https://the-decoder.com/feed/",
         "enabled": true,
-        "category": "ai-news"
+        "category": "ai-news",
+        "profile": "tech-news"
       },
       {
         "name": "AI 热榜",
         "url": "https://aihot.virxact.com/feed/full.xml",
         "enabled": true,
         "category": "major-ai",
-        "original_link_text": "阅读原文"
+        "original_link_text": "阅读原文",
+        "profile": "tech-news"
       },
       {
         "name": "GitHub Trending - Daily",
         "url": "https://mshibanami.github.io/GitHubTrendingRSS/daily/all.xml",
         "enabled": true,
-        "category": "discovery"
+        "category": "discovery",
+        "profile": "tech-news"
       }
     ],
     "reddit": {
@@ -282,59 +320,6 @@
       "enabled": false,
       "channels": []
     }
-  },
-  "filtering": {
-    "ai_score_threshold": 5.0,
-    "core_score_threshold": 7.0,
-    "watch_score_threshold": 4.0,
-    "max_watch_items": 4,
-    "time_window_hours": 24,
-    "focus_topics": [
-      "AI coding tools and coding agents",
-      "MCP and agent ecosystems",
-      "Practical AI engineering workflows and best practices",
-      "Developer-facing AI product releases and open-source tools",
-      "Major AI model, research, and product announcements with material developer impact"
-    ],
-    "max_items": 20,
-    "max_items_per_source": 2,
-    "fill_remaining_slots": true,
-    "category_groups": {
-      "releases": {
-        "name": "Project Releases",
-        "limit": 2,
-        "categories": ["release-monitoring"]
-      },
-      "focus": {
-        "name": "AI Coding and Agents",
-        "limit": 12,
-        "allow_backfill": true,
-        "categories": ["ai-coding", "agent-ecosystem"]
-      },
-      "ai-news": {
-        "name": "General AI News",
-        "limit": 3,
-        "categories": ["ai-news"]
-      },
-      "major-ai": {
-        "name": "Major AI Events",
-        "limit": 5,
-        "categories": ["major-ai"]
-      },
-      "discovery": {
-        "name": "Discovery",
-        "limit": 4,
-        "categories": ["discovery"]
-      },
-      "engineering": {
-        "name": "Engineering Practice",
-        "limit": 4,
-        "allow_backfill": true,
-        "categories": ["engineering-practice"]
-      }
-    },
-    "default_group": "other",
-    "default_group_limit": 1
   },
   "webhook": {
     "enabled": false,
@@ -372,5 +357,84 @@
       }
     },
     "headers": ""
+  },
+  "collection": {
+    "time_window_hours": 24
+  },
+  "processing": {
+    "profiles_dir": "profiles",
+    "default_profile": "tech-news",
+    "profile_settings": {
+      "tech-news": {
+        "threshold": 5.0,
+        "focus_topics": [
+          "AI coding tools and coding agents",
+          "MCP and agent ecosystems",
+          "Practical AI engineering workflows and best practices",
+          "Developer-facing AI product releases and open-source tools",
+          "Major AI model, research, and product announcements with material developer impact"
+        ],
+        "watch_score_threshold": 4.0
+      }
+    }
+  },
+  "digest": {
+    "core_score_threshold": 7.0,
+    "max_watch_items": 4,
+    "max_items": 20,
+    "max_items_per_source": 2,
+    "fill_remaining_slots": true,
+    "category_groups": {
+      "releases": {
+        "name": "Project Releases",
+        "limit": 2,
+        "categories": [
+          "release-monitoring"
+        ]
+      },
+      "focus": {
+        "name": "AI Coding and Agents",
+        "limit": 12,
+        "allow_backfill": true,
+        "categories": [
+          "ai-coding",
+          "agent-ecosystem"
+        ]
+      },
+      "ai-news": {
+        "name": "General AI News",
+        "limit": 3,
+        "categories": [
+          "ai-news"
+        ]
+      },
+      "major-ai": {
+        "name": "Major AI Events",
+        "limit": 5,
+        "categories": [
+          "major-ai"
+        ]
+      },
+      "discovery": {
+        "name": "Discovery",
+        "limit": 4,
+        "categories": [
+          "discovery"
+        ]
+      },
+      "engineering": {
+        "name": "Engineering Practice",
+        "limit": 4,
+        "allow_backfill": true,
+        "categories": [
+          "engineering-practice"
+        ]
+      }
+    },
+    "default_group": "other",
+    "default_group_limit": 1,
+    "profile_order": [
+      "tech-news"
+    ]
   }
 }
